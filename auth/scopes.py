@@ -111,6 +111,7 @@ TOOL_SCOPES_MAP = {
     "slides": SLIDES_SCOPES,
     "tasks": TASKS_SCOPES,
     "search": CUSTOM_SEARCH_SCOPES,
+    "templates": DRIVE_SCOPES + DOCS_SCOPES,
 }
 
 

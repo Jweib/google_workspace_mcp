@@ -174,6 +174,7 @@ def main():
 
     # Import tool modules to register them with the MCP server via decorators
     tool_imports = {
+<<<<<<< HEAD
         "gmail": lambda: import_module("gmail.gmail_tools"),
         "drive": lambda: import_module("gdrive.drive_tools"),
         "calendar": lambda: import_module("gcalendar.calendar_tools"),
@@ -197,6 +198,33 @@ def main():
         "slides": "🖼️",
         "tasks": "✓",
         "search": "🔍",
+=======
+        'gmail': lambda: import_module('gmail.gmail_tools'),
+        'drive': lambda: import_module('gdrive.drive_tools'),
+        'calendar': lambda: import_module('gcalendar.calendar_tools'),
+        'docs': lambda: import_module('gdocs.docs_tools'),
+        'sheets': lambda: import_module('gsheets.sheets_tools'),
+        'chat': lambda: import_module('gchat.chat_tools'),
+        'forms': lambda: import_module('gforms.forms_tools'),
+        'slides': lambda: import_module('gslides.slides_tools'),
+        'tasks': lambda: import_module('gtasks.tasks_tools'),
+        'search': lambda: import_module('gsearch.search_tools'),
+        'templates': lambda: import_module('gtemplates.templates_tools')
+    }
+
+    tool_icons = {
+        'gmail': '📧',
+        'drive': '📁',
+        'calendar': '📅',
+        'docs': '📄',
+        'sheets': '📊',
+        'chat': '💬',
+        'forms': '📝',
+        'slides': '🖼️',
+        'tasks': '✓',
+        'search': '🔍',
+        'templates': '📑'
+>>>>>>> 4f4e766 (Add template management tools for Google Docs and Drive)
     }
 
     # Determine which tools to import based on arguments
