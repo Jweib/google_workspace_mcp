@@ -123,12 +123,13 @@ import gforms.forms_tools
 import gslides.slides_tools
 import gtasks.tasks_tools
 import gsearch.search_tools
+import gtemplates.templates_tools
 
 # Configure tool registration
 wrap_server_tool_method(server)
 
 # Enable all tools and services by default
-all_services = ['gmail', 'drive', 'calendar', 'docs', 'sheets', 'chat', 'forms', 'slides', 'tasks', 'search']
+all_services = ['gmail', 'drive', 'calendar', 'docs', 'sheets', 'chat', 'forms', 'slides', 'tasks', 'search', 'templates']
 set_enabled_tools(all_services)  # Set enabled services for scopes
 set_enabled_tool_names(None)  # Don't filter individual tools - enable all
 

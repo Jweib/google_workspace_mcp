@@ -135,7 +135,8 @@ TOOL_SCOPES_MAP = {
     'forms': FORMS_SCOPES,
     'slides': SLIDES_SCOPES,
     'tasks': TASKS_SCOPES,
-    'search': CUSTOM_SEARCH_SCOPES
+    'search': CUSTOM_SEARCH_SCOPES,
+    'templates': DRIVE_SCOPES + DOCS_SCOPES,
 }
 
 def set_enabled_tools(enabled_tools):

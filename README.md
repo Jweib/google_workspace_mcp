@@ -171,6 +171,8 @@ uv run main.py --tools gmail drive
 | `MCP_ENABLE_OAUTH21` | Set to `true` for OAuth 2.1 support |
 | `EXTERNAL_OAUTH21_PROVIDER` | Set to `true` for external OAuth flow with bearer tokens (requires OAuth 2.1) |
 | `WORKSPACE_MCP_STATELESS_MODE` | Set to `true` for stateless operation (requires OAuth 2.1) |
+| `TEMPLATE_FOLDER_ID` | Default Drive folder for template listing |
+| `OUTPUT_FOLDER_ID` | Destination Drive folder for duplicated/ exported files |
 
 </td></tr>
 </table>
@@ -748,6 +750,37 @@ cp .env.oauth21 .env
 | `create_table_with_data` | Complete | Create data tables |
 | `debug_table_structure` | Complete | Debug table issues |
 | `*_document_comments` | Complete | Read, Reply, Create, Resolve |
+
+### 📑 **Template Automation** <sub>[`templates_tools.py`](gtemplates/templates_tools.py)</sub>
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `list_templates` | **Core** | List files from `TEMPLATE_FOLDER_ID` |
+| `duplicate_template` | **Core** | Copy a Doc template with a new name |
+| `fill_template_variables` | **Extended** | Replace `{{KEY}}` placeholders via batch update |
+| `export_pdf` | **Extended** | Export a Doc as PDF into `OUTPUT_FOLDER_ID` |
+
+**Quick tool payloads**
+
+```json
+// list_templates
+{}
+
+// duplicate_template
+{"templateId":"<template_id>","newName":"Project Brief"}
+
+// fill_template_variables
+{"documentId":"<doc_id>","variables":{"TITLE":"Q4 Plan","OWNER":"Alex"}}
+
+// export_pdf
+{"documentId":"<doc_id>"}
+```
+
+**Manual sanity checks**
+- `list_templates` returns the files from `TEMPLATE_FOLDER_ID` with links.
+- `duplicate_template` creates a new Doc (check in `OUTPUT_FOLDER_ID` if set).
+- `fill_template_variables` replaces `{{KEY}}` occurrences and reports the count.
+- `export_pdf` uploads a PDF version to the output folder and returns its link.
 
 </td>
 </tr>

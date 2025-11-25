@@ -134,3 +134,12 @@ search:
     - search_custom_siterestrict
   complete:
     - get_search_engine_info
+
+templates:
+  core:
+    - list_templates
+    - duplicate_template
+  extended:
+    - fill_template_variables
+    - export_pdf
+  complete: []
