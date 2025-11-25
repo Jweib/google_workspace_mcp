@@ -141,7 +141,8 @@ def main():
         'forms': lambda: import_module('gforms.forms_tools'),
         'slides': lambda: import_module('gslides.slides_tools'),
         'tasks': lambda: import_module('gtasks.tasks_tools'),
-        'search': lambda: import_module('gsearch.search_tools')
+        'search': lambda: import_module('gsearch.search_tools'),
+        'templates': lambda: import_module('gtemplates.templates_tools')
     }
 
     tool_icons = {
@@ -154,7 +155,8 @@ def main():
         'forms': '📝',
         'slides': '🖼️',
         'tasks': '✓',
-        'search': '🔍'
+        'search': '🔍',
+        'templates': '📑'
     }
 
     # Determine which tools to import based on arguments
