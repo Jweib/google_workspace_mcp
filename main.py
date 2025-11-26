@@ -76,7 +76,7 @@ def main():
     parser.add_argument('--single-user', action='store_true',
                         help='Run in single-user mode - bypass session mapping and use any credentials from the credentials directory')
     parser.add_argument('--tools', nargs='*',
-                        choices=['gmail', 'drive', 'calendar', 'docs', 'sheets', 'chat', 'forms', 'slides', 'tasks', 'search'],
+                        choices=['gmail', 'drive', 'calendar', 'docs', 'sheets', 'chat', 'forms', 'slides', 'tasks', 'search', 'templates'],
                         help='Specify which tools to register. If not provided, all tools are registered.')
     parser.add_argument('--tool-tier', choices=['core', 'extended', 'complete'],
                         help='Load tools based on tier level. Can be combined with --tools to filter services.')
