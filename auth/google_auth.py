@@ -53,7 +53,6 @@ def get_default_credentials_dir():
     return os.path.join(os.getcwd(), ".credentials")
 
 
-<<<<<<< HEAD
 DEFAULT_CREDENTIALS_DIR = get_default_credentials_dir()
 
 # Session credentials now handled by OAuth21SessionStore - no local cache needed
