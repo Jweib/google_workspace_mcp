@@ -306,7 +306,42 @@ def create_oauth_flow(
 # --- Core OAuth Logic ---
 
 
+# OAuth functions blocked - Service Account only
 async def start_auth_flow(
+    user_google_email: Optional[str],
+    service_name: str,
+    redirect_uri: str,
+) -> str:
+    """
+    OAuth flow is not supported - Service Account only.
+    """
+    logger.warning("OAuth not supported for this MCP")
+    raise GoogleAuthenticationError(
+        "OAuth authentication is not supported. This MCP uses Service Account authentication only. "
+        "Please ensure GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables are configured."
+    )
+
+
+def handle_auth_callback(
+    scopes: List[str],
+    authorization_response: str,
+    redirect_uri: str,
+    credentials_base_dir: str = DEFAULT_CREDENTIALS_DIR,
+    session_id: Optional[str] = None,
+    client_secrets_path: Optional[
+        str
+    ] = None,  # Deprecated: kept for backward compatibility
+) -> Tuple[str, Any]:
+    """
+    OAuth callback is not supported - Service Account only.
+    """
+    logger.warning("OAuth not supported for this MCP")
+    raise GoogleAuthenticationError(
+        "OAuth authentication is not supported. This MCP uses Service Account authentication only."
+    )
+
+
+def _legacy_start_auth_flow(
     user_google_email: Optional[str],
     service_name: str,  # e.g., "Google Calendar", "Gmail" for user messages
     redirect_uri: str,  # Added redirect_uri as a required parameter
@@ -825,21 +860,21 @@ async def get_authenticated_google_service(
     service_name: str,  # "gmail", "calendar", "drive", "docs"
     version: str,  # "v1", "v3"
     tool_name: str,  # For logging/debugging
-    user_google_email: str,  # Required - no more Optional
+    user_google_email: str,  # Required for domain-wide delegation
     required_scopes: List[str],
     session_id: Optional[str] = None,  # Session context for logging (ignored for Service Account)
 ) -> tuple[Any, str]:
     """
-    Centralized Google service authentication using OAuth credentials.
+    Centralized Google service authentication using Service Account JWT.
     Returns (service, user_email) on success or raises GoogleAuthenticationError.
 
     Args:
         service_name: The Google service name ("gmail", "calendar", "drive", "docs")
         version: The API version ("v1", "v3", etc.)
         tool_name: The name of the calling tool (for logging/debugging)
-        user_google_email: The user's Google email address
+        user_google_email: The user's Google email address (required for domain-wide delegation)
         required_scopes: List of required OAuth scopes
-        session_id: Optional MCP session ID for credential lookup
+        session_id: Optional MCP session ID (ignored for Service Account)
 
     Returns:
         tuple[service, user_email] on success
@@ -847,88 +882,38 @@ async def get_authenticated_google_service(
     Raises:
         GoogleAuthenticationError: When authentication fails
     """
-    # Try to get FastMCP session ID if not provided
-    if not session_id:
-        try:
-            # First try context variable (works in async context)
-            session_id = get_fastmcp_session_id()
-            if session_id:
-                logger.debug(
-                    f"[{tool_name}] Got FastMCP session ID from context: {session_id}"
-                )
-            else:
-                logger.debug(
-                    f"[{tool_name}] Context variable returned None/empty session ID"
-                )
-        except Exception as e:
-            logger.debug(
-                f"[{tool_name}] Could not get FastMCP session from context: {e}"
-            )
-
-        # Fallback to direct FastMCP context if context variable not set
-        if not session_id and get_fastmcp_context:
-            try:
-                fastmcp_ctx = get_fastmcp_context()
-                if fastmcp_ctx and hasattr(fastmcp_ctx, "session_id"):
-                    session_id = fastmcp_ctx.session_id
-                    logger.debug(
-                        f"[{tool_name}] Got FastMCP session ID directly: {session_id}"
-                    )
-                else:
-                    logger.debug(
-                        f"[{tool_name}] FastMCP context exists but no session_id attribute"
-                    )
-            except Exception as e:
-                logger.debug(
-                    f"[{tool_name}] Could not get FastMCP context directly: {e}"
-                )
-
-        # Final fallback: log if we still don't have session_id
-        if not session_id:
-            logger.warning(
-                f"[{tool_name}] Unable to obtain FastMCP session ID from any source"
-            )
-
-    credentials = await asyncio.to_thread(
-        get_credentials,
-        user_google_email=user_google_email,
-        required_scopes=required_scopes,
-        client_secrets_path=CONFIG_CLIENT_SECRETS_PATH,
-        session_id=session_id,  # Pass through session context
+    logger.info(
+        f"[{tool_name}] Attempting to get authenticated {service_name} service using Service Account. Email: '{user_google_email}'"
     )
 
-    if not credentials or not credentials.valid:
-        logger.warning(
-            f"[{tool_name}] No valid credentials. Email: '{user_google_email}'."
-        )
-        logger.info(
-            f"[{tool_name}] Valid email '{user_google_email}' provided, initiating auth flow."
-        )
+    # Validate email format
+    if not user_google_email or "@" not in user_google_email:
+        error_msg = f"Authentication required for {tool_name}. No valid 'user_google_email' provided. Please provide a valid Google email address."
+        logger.info(f"[{tool_name}] {error_msg}")
+        raise GoogleAuthenticationError(error_msg)
 
-        # Ensure OAuth callback is available
-        from auth.oauth_callback_server import ensure_oauth_callback_available
-
-        redirect_uri = get_oauth_redirect_uri()
-        config = get_oauth_config()
-        success, error_msg = ensure_oauth_callback_available(
-            get_transport_mode(), config.port, config.base_uri
+    # Get Service Account credentials
+    try:
+        credentials = await asyncio.to_thread(
+            get_service_account_credentials,
+            required_scopes=required_scopes,
         )
-        if not success:
-            raise GoogleAuthenticationError(
-                f"OAuth callback server not available: {error_msg}. Cannot proceed with authentication."
-            )
-
-        auth_message = await start_auth_flow(
-            user_google_email=user_google_email,
-            service_name=service_name,
-            redirect_uri=redirect_uri,
-        )
-        raise GoogleAuthenticationError(auth_message, auth_url=None)
+        
+        # For domain-wide delegation, impersonate the user
+        if user_google_email:
+            credentials = credentials.with_subject(user_google_email)
+            logger.info(f"[{tool_name}] Using domain-wide delegation for user: {user_google_email}")
+    except GoogleAuthenticationError:
+        raise
+    except Exception as e:
+        error_msg = f"[{tool_name}] Failed to get Service Account credentials: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        raise GoogleAuthenticationError(error_msg)
 
     try:
         service = build(service_name, version, credentials=credentials)
         logger.info(
-            f"[{tool_name}] Successfully authenticated {service_name} service for user: {user_google_email}"
+            f"[{tool_name}] Successfully authenticated {service_name} service using Service Account for user: {user_google_email}"
         )
         return service, user_google_email
 

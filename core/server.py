@@ -86,7 +86,7 @@ def _ensure_legacy_callback_route() -> None:
 def configure_server_for_http():
     """
     Configures the server for HTTP transport.
-    OAuth is blocked - Service Account authentication only.
+    OAuth is not supported - Service Account authentication only.
     """
     global _auth_provider
 
@@ -95,71 +95,12 @@ def configure_server_for_http():
     if transport_mode != "streamable-http":
         return
 
-    # Use centralized OAuth configuration
-    from auth.oauth_config import get_oauth_config
-
-    config = get_oauth_config()
-
-    # Check if OAuth 2.1 is enabled via centralized config
-    oauth21_enabled = config.is_oauth21_enabled()
-
-    if oauth21_enabled:
-        if not config.is_configured():
-            logger.warning("OAuth 2.1 enabled but OAuth credentials not configured")
-            return
-
-        try:
-            required_scopes: List[str] = sorted(get_current_scopes())
-
-            # Check if external OAuth provider is configured
-            if config.is_external_oauth21_provider():
-                # External OAuth mode: use custom provider that handles ya29.* access tokens
-                from auth.external_oauth_provider import ExternalOAuthProvider
-
-                provider = ExternalOAuthProvider(
-                    client_id=config.client_id,
-                    client_secret=config.client_secret,
-                    base_url=config.get_oauth_base_url(),
-                    redirect_path=config.redirect_path,
-                    required_scopes=required_scopes,
-                )
-                # Disable protocol-level auth, expect bearer tokens in tool calls
-                server.auth = None
-                logger.info(
-                    "OAuth 2.1 enabled with EXTERNAL provider mode - protocol-level auth disabled"
-                )
-                logger.info(
-                    "Expecting Authorization bearer tokens in tool call headers"
-                )
-            else:
-                # Standard OAuth 2.1 mode: use FastMCP's GoogleProvider
-                provider = GoogleProvider(
-                    client_id=config.client_id,
-                    client_secret=config.client_secret,
-                    base_url=config.get_oauth_base_url(),
-                    redirect_path=config.redirect_path,
-                    required_scopes=required_scopes,
-                )
-                # Enable protocol-level auth
-                server.auth = provider
-                logger.info(
-                    "OAuth 2.1 enabled using FastMCP GoogleProvider with protocol-level auth"
-                )
-
-            # Always set auth provider for token validation in middleware
-            set_auth_provider(provider)
-            _auth_provider = provider
-        except Exception as exc:
-            logger.error(
-                "Failed to initialize FastMCP GoogleProvider: %s", exc, exc_info=True
-            )
-            raise
-    else:
-        logger.info("OAuth 2.0 mode - Server will use legacy authentication.")
-        server.auth = None
-        _auth_provider = None
-        set_auth_provider(None)
-        _ensure_legacy_callback_route()
+    # OAuth is not supported - Service Account only
+    logger.info("Service Account authentication mode - OAuth disabled")
+    server.auth = None
+    _auth_provider = None
+    set_auth_provider(None)
+    _ensure_legacy_callback_route()
 
 
 def get_auth_provider() -> Optional[GoogleProvider]:
@@ -282,25 +223,8 @@ async def start_google_auth(
     service_name: str, user_google_email: str = USER_GOOGLE_EMAIL
 ) -> str:
     """
-    Initiates Google OAuth authentication flow for the specified service.
+    OAuth authentication is not supported. This MCP uses Service Account authentication only.
+    Please ensure GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables are set.
     """
-    from auth.google_auth import start_auth_flow, check_client_secrets
-    from core.config import get_oauth_redirect_uri
-
-    if not user_google_email:
-        raise ValueError("user_google_email must be provided.")
-
-    error_message = check_client_secrets()
-    if error_message:
-        return f"**Authentication Error:** {error_message}"
-
-    try:
-        auth_message = await start_auth_flow(
-            user_google_email=user_google_email,
-            service_name=service_name,
-            redirect_uri=get_oauth_redirect_uri(),
-        )
-        return auth_message
-    except Exception as e:
-        logger.error(f"Failed to start Google authentication flow: {e}", exc_info=True)
-        return f"**Error:** An unexpected error occurred: {e}"
+    logger.warning("OAuth not supported for this MCP")
+    raise ValueError("OAuth authentication is not supported. This MCP uses Service Account authentication only. Please ensure GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables are configured.")

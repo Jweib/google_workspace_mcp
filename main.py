@@ -158,18 +158,9 @@ def main():
     redacted_key = f"{private_key[:4]}...{private_key[-4:]}" if len(private_key) > 8 else "Invalid or too short"
 
     config_vars = {
-        "GOOGLE_OAUTH_CLIENT_ID": os.getenv("GOOGLE_OAUTH_CLIENT_ID", "Not Set"),
-        "GOOGLE_OAUTH_CLIENT_SECRET": redacted_secret,
+        "GOOGLE_CLIENT_EMAIL": os.getenv("GOOGLE_CLIENT_EMAIL", "Not Set"),
+        "GOOGLE_PRIVATE_KEY": redacted_key,
         "USER_GOOGLE_EMAIL": os.getenv("USER_GOOGLE_EMAIL", "Not Set"),
-        "MCP_SINGLE_USER_MODE": os.getenv("MCP_SINGLE_USER_MODE", "false"),
-        "MCP_ENABLE_OAUTH21": os.getenv("MCP_ENABLE_OAUTH21", "false"),
-        "WORKSPACE_MCP_STATELESS_MODE": os.getenv(
-            "WORKSPACE_MCP_STATELESS_MODE", "false"
-        ),
-        "OAUTHLIB_INSECURE_TRANSPORT": os.getenv(
-            "OAUTHLIB_INSECURE_TRANSPORT", "false"
-        ),
-        "GOOGLE_CLIENT_SECRET_PATH": os.getenv("GOOGLE_CLIENT_SECRET_PATH", "Not Set"),
     }
 
     for key, value in config_vars.items():

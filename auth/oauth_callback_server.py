@@ -53,57 +53,13 @@ class MinimalOAuthServer:
 
         @self.app.get("/oauth2callback")
         async def oauth_callback(request: Request):
-            """Handle OAuth callback - same logic as in core/server.py"""
-            state = request.query_params.get("state")
-            code = request.query_params.get("code")
-            error = request.query_params.get("error")
-
-            if error:
-                error_message = f"Authentication failed: Google returned an error: {error}. State: {state}."
-                logger.error(error_message)
-                return create_error_response(error_message)
-
-            if not code:
-                error_message = (
-                    "Authentication failed: No authorization code received from Google."
-                )
-                logger.error(error_message)
-                return create_error_response(error_message)
-
-            try:
-                # Check if we have credentials available (environment variables or file)
-                error_message = check_client_secrets()
-                if error_message:
-                    return create_server_error_response(error_message)
-
-                logger.info(
-                    f"OAuth callback: Received code (state: {state}). Attempting to exchange for tokens."
-                )
-
-                # Session ID tracking removed - not needed
-
-                # Exchange code for credentials
-                redirect_uri = get_oauth_redirect_uri()
-                verified_user_id, credentials = handle_auth_callback(
-                    scopes=get_current_scopes(),
-                    authorization_response=str(request.url),
-                    redirect_uri=redirect_uri,
-                    session_id=None,
-                )
-
-                logger.info(
-                    f"OAuth callback: Successfully authenticated user: {verified_user_id} (state: {state})."
-                )
-
-                # Return success page using shared template
-                return create_success_response(verified_user_id)
-
-            except Exception as e:
-                error_message_detail = (
-                    f"Error processing OAuth callback (state: {state}): {str(e)}"
-                )
-                logger.error(error_message_detail, exc_info=True)
-                return create_server_error_response(str(e))
+            """Block OAuth callback - Service Account only."""
+            logger.warning("OAuth not supported for this MCP")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"error": "OAuth not supported for this MCP. Service Account authentication only."}
+            )
 
     def _setup_attachment_route(self):
         """Setup the attachment serving route."""
