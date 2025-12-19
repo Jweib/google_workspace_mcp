@@ -2,17 +2,18 @@
 
 import asyncio
 import json
-import jwt
 import logging
 import os
-
-from typing import List, Optional, Tuple, Dict, Any
 from urllib.parse import parse_qs, urlparse
 
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
-from google.auth.transport.requests import Request
+from typing import Dict, List, Optional, Tuple, Any
+
+import jwt
 from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from auth.scopes import SCOPES, get_current_scopes  # noqa
@@ -52,6 +53,7 @@ def get_default_credentials_dir():
     return os.path.join(os.getcwd(), ".credentials")
 
 
+<<<<<<< HEAD
 DEFAULT_CREDENTIALS_DIR = get_default_credentials_dir()
 
 # Session credentials now handled by OAuth21SessionStore - no local cache needed
@@ -777,32 +779,74 @@ class GoogleAuthenticationError(Exception):
         self.auth_url = auth_url
 
 
+def get_service_account_credentials(required_scopes: List[str]):
+    """
+    Get Service Account credentials using JWT authentication.
+    
+    Args:
+        required_scopes: List of required OAuth scopes
+        
+    Returns:
+        ServiceAccountCredentials object
+        
+    Raises:
+        GoogleAuthenticationError: If Service Account credentials are not configured
+    """
+    client_email = os.getenv("GOOGLE_CLIENT_EMAIL")
+    private_key = os.getenv("GOOGLE_PRIVATE_KEY")
+    
+    if not client_email or not private_key:
+        raise GoogleAuthenticationError(
+            "Service Account credentials not configured. "
+            "Please set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables."
+        )
+    
+    # Replace escaped newlines in private key
+    private_key = private_key.replace('\\n', '\n')
+    
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            {
+                "type": "service_account",
+                "client_email": client_email,
+                "private_key": private_key,
+            },
+            scopes=required_scopes,
+        )
+        logger.info("Service Account credentials created successfully")
+        return credentials
+    except Exception as e:
+        error_msg = f"Failed to create Service Account credentials: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        raise GoogleAuthenticationError(error_msg)
+
+
 async def get_authenticated_google_service(
     service_name: str,  # "gmail", "calendar", "drive", "docs"
     version: str,  # "v1", "v3"
     tool_name: str,  # For logging/debugging
     user_google_email: str,  # Required - no more Optional
     required_scopes: List[str],
-    session_id: Optional[str] = None,  # Session context for logging
+    session_id: Optional[str] = None,  # Session context for logging (ignored for Service Account)
 ) -> tuple[Any, str]:
     """
-    Centralized Google service authentication for all MCP tools.
+    Centralized Google service authentication using OAuth credentials.
     Returns (service, user_email) on success or raises GoogleAuthenticationError.
 
     Args:
         service_name: The Google service name ("gmail", "calendar", "drive", "docs")
         version: The API version ("v1", "v3", etc.)
         tool_name: The name of the calling tool (for logging/debugging)
-        user_google_email: The user's Google email address (required)
+        user_google_email: The user's Google email address
         required_scopes: List of required OAuth scopes
+        session_id: Optional MCP session ID for credential lookup
 
     Returns:
         tuple[service, user_email] on success
 
     Raises:
-        GoogleAuthenticationError: When authentication is required or fails
+        GoogleAuthenticationError: When authentication fails
     """
-
     # Try to get FastMCP session ID if not provided
     if not session_id:
         try:
@@ -845,16 +889,6 @@ async def get_authenticated_google_service(
                 f"[{tool_name}] Unable to obtain FastMCP session ID from any source"
             )
 
-    logger.info(
-        f"[{tool_name}] Attempting to get authenticated {service_name} service. Email: '{user_google_email}', Session: '{session_id}'"
-    )
-
-    # Validate email format
-    if not user_google_email or "@" not in user_google_email:
-        error_msg = f"Authentication required for {tool_name}. No valid 'user_google_email' provided. Please provide a valid Google email address."
-        logger.info(f"[{tool_name}] {error_msg}")
-        raise GoogleAuthenticationError(error_msg)
-
     credentials = await asyncio.to_thread(
         get_credentials,
         user_google_email=user_google_email,
@@ -880,45 +914,27 @@ async def get_authenticated_google_service(
             get_transport_mode(), config.port, config.base_uri
         )
         if not success:
-            error_detail = f" ({error_msg})" if error_msg else ""
             raise GoogleAuthenticationError(
-                f"Cannot initiate OAuth flow - callback server unavailable{error_detail}"
+                f"OAuth callback server not available: {error_msg}. Cannot proceed with authentication."
             )
 
-        # Generate auth URL and raise exception with it
-        auth_response = await start_auth_flow(
+        auth_message = await start_auth_flow(
             user_google_email=user_google_email,
-            service_name=f"Google {service_name.title()}",
+            service_name=service_name,
             redirect_uri=redirect_uri,
         )
-
-        # Extract the auth URL from the response and raise with it
-        raise GoogleAuthenticationError(auth_response)
+        raise GoogleAuthenticationError(auth_message, auth_url=None)
 
     try:
         service = build(service_name, version, credentials=credentials)
-        log_user_email = user_google_email
-
-        # Try to get email from credentials if needed for validation
-        if credentials and credentials.id_token:
-            try:
-                # Decode without verification (just to get email for logging)
-                decoded_token = jwt.decode(
-                    credentials.id_token, options={"verify_signature": False}
-                )
-                token_email = decoded_token.get("email")
-                if token_email:
-                    log_user_email = token_email
-                    logger.info(f"[{tool_name}] Token email: {token_email}")
-            except Exception as e:
-                logger.debug(f"[{tool_name}] Could not decode id_token: {e}")
-
         logger.info(
-            f"[{tool_name}] Successfully authenticated {service_name} service for user: {log_user_email}"
+            f"[{tool_name}] Successfully authenticated {service_name} service for user: {user_google_email}"
         )
-        return service, log_user_email
+        return service, user_google_email
 
     except Exception as e:
         error_msg = f"[{tool_name}] Failed to build {service_name} service: {str(e)}"
         logger.error(error_msg, exc_info=True)
         raise GoogleAuthenticationError(error_msg)
+
+

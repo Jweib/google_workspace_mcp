@@ -10,8 +10,7 @@ from starlette.middleware import Middleware
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
 
-from auth.oauth21_session_store import get_oauth21_session_store, set_auth_provider
-from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
+from auth.oauth21_session_store import set_auth_provider
 from auth.mcp_session_middleware import MCPSessionMiddleware
 from auth.oauth_responses import (
     create_error_response,
@@ -24,7 +23,6 @@ from core.config import (
     USER_GOOGLE_EMAIL,
     get_transport_mode,
     set_transport_mode as _set_transport_mode,
-    get_oauth_redirect_uri as get_oauth_redirect_uri_for_current_mode,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -69,17 +67,26 @@ def set_transport_mode(mode: str):
 
 
 def _ensure_legacy_callback_route() -> None:
+    """OAuth routes are blocked - Service Account only."""
     global _legacy_callback_registered
     if _legacy_callback_registered:
         return
-    server.custom_route("/oauth2callback", methods=["GET"])(legacy_oauth2_callback)
+    # Block OAuth callback route
+    @server.custom_route("/oauth2callback", methods=["GET"])
+    async def block_oauth_callback(request: Request):
+        logger.warning("OAuth not supported for this MCP")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=403,
+            content={"error": "OAuth not supported for this MCP. Service Account authentication only."}
+        )
     _legacy_callback_registered = True
 
 
 def configure_server_for_http():
     """
-    Configures the authentication provider for HTTP transport.
-    This must be called BEFORE server.run().
+    Configures the server for HTTP transport.
+    OAuth is blocked - Service Account authentication only.
     """
     global _auth_provider
 
@@ -201,6 +208,10 @@ async def serve_attachment(file_id: str, request: Request):
 
 
 async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
+    from auth.google_auth import handle_auth_callback, check_client_secrets
+    from auth.oauth21_session_store import get_oauth21_session_store
+    from core.config import get_oauth_redirect_uri
+
     state = request.query_params.get("state")
     code = request.query_params.get("code")
     error = request.query_params.get("error")
@@ -231,7 +242,7 @@ async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
         verified_user_id, credentials = handle_auth_callback(
             scopes=get_current_scopes(),
             authorization_response=str(request.url),
-            redirect_uri=get_oauth_redirect_uri_for_current_mode(),
+            redirect_uri=get_oauth_redirect_uri(),
             session_id=mcp_session_id,
         )
 
@@ -271,18 +282,11 @@ async def start_google_auth(
     service_name: str, user_google_email: str = USER_GOOGLE_EMAIL
 ) -> str:
     """
-    Manually initiate Google OAuth authentication flow.
-
-    NOTE: This tool should typically NOT be called directly. The authentication system
-    automatically handles credential checks and prompts for authentication when needed.
-    Only use this tool if:
-    1. You need to re-authenticate with different credentials
-    2. You want to proactively authenticate before using other tools
-    3. The automatic authentication flow failed and you need to retry
-
-    In most cases, simply try calling the Google Workspace tool you need - it will
-    automatically handle authentication if required.
+    Initiates Google OAuth authentication flow for the specified service.
     """
+    from auth.google_auth import start_auth_flow, check_client_secrets
+    from core.config import get_oauth_redirect_uri
+
     if not user_google_email:
         raise ValueError("user_google_email must be provided.")
 
@@ -294,7 +298,7 @@ async def start_google_auth(
         auth_message = await start_auth_flow(
             user_google_email=user_google_email,
             service_name=service_name,
-            redirect_uri=get_oauth_redirect_uri_for_current_mode(),
+            redirect_uri=get_oauth_redirect_uri(),
         )
         return auth_message
     except Exception as e:

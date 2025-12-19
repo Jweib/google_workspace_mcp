@@ -138,7 +138,6 @@ def main():
     safe_print(f"   🌐 Transport: {args.transport}")
     if args.transport == "streamable-http":
         safe_print(f"   🔗 URL: {display_url}")
-        safe_print(f"   🔐 OAuth Callback: {display_url}/oauth2callback")
     safe_print(f"   👤 Mode: {'Single-user' if args.single_user else 'Multi-user'}")
     safe_print(f"   🐍 Python: {sys.version.split()[0]}")
     safe_print("")
@@ -153,6 +152,10 @@ def main():
         if len(client_secret) > 8
         else "Invalid or too short"
     )
+
+    # Redact private key for security
+    private_key = os.getenv('GOOGLE_PRIVATE_KEY', 'Not Set')
+    redacted_key = f"{private_key[:4]}...{private_key[-4:]}" if len(private_key) > 8 else "Invalid or too short"
 
     config_vars = {
         "GOOGLE_OAUTH_CLIENT_ID": os.getenv("GOOGLE_OAUTH_CLIENT_ID", "Not Set"),

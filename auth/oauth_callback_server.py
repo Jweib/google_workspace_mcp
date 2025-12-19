@@ -49,7 +49,7 @@ class MinimalOAuthServer:
         self._setup_attachment_route()
 
     def _setup_callback_route(self):
-        """Setup the OAuth callback route."""
+        """Setup the OAuth callback route - blocked for Service Account only mode."""
 
         @self.app.get("/oauth2callback")
         async def oauth_callback(request: Request):
