@@ -115,20 +115,21 @@ def configure_safe_logging():
 # Configure safe logging
 configure_safe_logging()
 
-# Check credentials directory permissions (skip in stateless mode)
+# Check Service Account credentials configuration (skip in stateless mode)
 if not is_stateless_mode():
     try:
-        logger.info("Checking credentials directory permissions...")
+        logger.info("Checking Service Account credentials configuration...")
         check_credentials_directory_permissions()
-        logger.info("Credentials directory permissions verified")
-    except (PermissionError, OSError) as e:
-        logger.error(f"Credentials directory permission check failed: {e}")
+        logger.info("Service Account credentials configuration verified")
+    except (PermissionError, OSError, ValueError) as e:
+        logger.error(f"Service Account credentials check failed: {e}")
         logger.error(
-            "   Please ensure the service has write permissions to create/access the credentials directory"
+            "   Please ensure GOOGLE_SERVICE_ACCOUNT_JSON or "
+            "GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY are configured"
         )
         sys.exit(1)
 else:
-    logger.info("🔍 Skipping credentials directory check (stateless mode)")
+    logger.info("🔍 Skipping credentials check (stateless mode)")
 
 # Set transport mode for HTTP (FastMCP CLI defaults to streamable-http)
 set_transport_mode("streamable-http")
@@ -150,7 +151,6 @@ import gtemplates.templates_tools
 wrap_server_tool_method(server)
 
 # Enable all tools and services by default
-<<<<<<< HEAD
 all_services = [
     "gmail",
     "drive",
@@ -162,10 +162,8 @@ all_services = [
     "slides",
     "tasks",
     "search",
+    "templates",
 ]
-=======
-all_services = ['gmail', 'drive', 'calendar', 'docs', 'sheets', 'chat', 'forms', 'slides', 'tasks', 'search', 'templates']
->>>>>>> 4f4e766 (Add template management tools for Google Docs and Drive)
 set_enabled_tools(all_services)  # Set enabled services for scopes
 set_enabled_tool_names(None)  # Don't filter individual tools - enable all
 

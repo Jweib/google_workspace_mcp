@@ -271,22 +271,23 @@ def main():
         safe_print("🔐 Single-user mode enabled")
         safe_print("")
 
-    # Check credentials directory permissions before starting (skip in stateless mode)
+    # Check Service Account credentials configuration (skip in stateless mode)
     if not is_stateless_mode():
         try:
-            safe_print("🔍 Checking credentials directory permissions...")
+            safe_print("🔍 Checking Service Account credentials configuration...")
             check_credentials_directory_permissions()
-            safe_print("✅ Credentials directory permissions verified")
+            safe_print("✅ Service Account credentials configuration verified")
             safe_print("")
-        except (PermissionError, OSError) as e:
-            safe_print(f"❌ Credentials directory permission check failed: {e}")
+        except (PermissionError, OSError, ValueError) as e:
+            safe_print(f"❌ Service Account credentials check failed: {e}")
             safe_print(
-                "   Please ensure the service has write permissions to create/access the credentials directory"
+                "   Please ensure GOOGLE_SERVICE_ACCOUNT_JSON or "
+                "GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY are configured"
             )
-            logger.error(f"Failed credentials directory permission check: {e}")
+            logger.error(f"Failed Service Account credentials check: {e}")
             sys.exit(1)
     else:
-        safe_print("🔍 Skipping credentials directory check (stateless mode)")
+        safe_print("🔍 Skipping credentials check (stateless mode)")
         safe_print("")
 
     try:

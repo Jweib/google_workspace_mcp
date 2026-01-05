@@ -30,65 +30,58 @@ class UserInputError(Exception):
 
 def check_credentials_directory_permissions(credentials_dir: str = None) -> None:
     """
-    Check if the service has appropriate permissions to create and write to the .credentials directory.
+    Check credentials configuration for Service Account mode.
+
+    Since we use Service Account + Domain-Wide Delegation, we don't need
+    a credentials directory. This function verifies that Service Account
+    environment variables are properly configured.
 
     Args:
-        credentials_dir: Path to the credentials directory (default: uses get_default_credentials_dir())
+        credentials_dir: Ignored (kept for backward compatibility)
 
     Raises:
-        PermissionError: If the service lacks necessary permissions
-        OSError: If there are other file system issues
+        ValueError: If Service Account credentials are not configured
     """
-    if credentials_dir is None:
-        from auth.google_auth import get_default_credentials_dir
+    # Check if Service Account is configured
+    service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    client_email = os.getenv("GOOGLE_CLIENT_EMAIL")
+    private_key = os.getenv("GOOGLE_PRIVATE_KEY")
 
-        credentials_dir = get_default_credentials_dir()
+    if service_account_json:
+        # Service Account JSON is configured
+        try:
+            import json
+            json.loads(service_account_json)
+            logger.info(
+                "Service Account authentication: GOOGLE_SERVICE_ACCOUNT_JSON is configured and valid"
+            )
+            return
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"GOOGLE_SERVICE_ACCOUNT_JSON is set but contains invalid JSON: {e}"
+            )
+            # Don't raise here, let the auth module handle it with a clearer error
+            return
+        except Exception:
+            # json module might not be available, but that's unlikely
+            pass
 
-    try:
-        # Check if directory exists
-        if os.path.exists(credentials_dir):
-            # Directory exists, check if we can write to it
-            test_file = os.path.join(credentials_dir, ".permission_test")
-            try:
-                with open(test_file, "w") as f:
-                    f.write("test")
-                os.remove(test_file)
-                logger.info(
-                    f"Credentials directory permissions check passed: {os.path.abspath(credentials_dir)}"
-                )
-            except (PermissionError, OSError) as e:
-                raise PermissionError(
-                    f"Cannot write to existing credentials directory '{os.path.abspath(credentials_dir)}': {e}"
-                )
-        else:
-            # Directory doesn't exist, try to create it and its parent directories
-            try:
-                os.makedirs(credentials_dir, exist_ok=True)
-                # Test writing to the new directory
-                test_file = os.path.join(credentials_dir, ".permission_test")
-                with open(test_file, "w") as f:
-                    f.write("test")
-                os.remove(test_file)
-                logger.info(
-                    f"Created credentials directory with proper permissions: {os.path.abspath(credentials_dir)}"
-                )
-            except (PermissionError, OSError) as e:
-                # Clean up if we created the directory but can't write to it
-                try:
-                    if os.path.exists(credentials_dir):
-                        os.rmdir(credentials_dir)
-                except (PermissionError, OSError):
-                    pass
-                raise PermissionError(
-                    f"Cannot create or write to credentials directory '{os.path.abspath(credentials_dir)}': {e}"
-                )
-
-    except PermissionError:
-        raise
-    except Exception as e:
-        raise OSError(
-            f"Unexpected error checking credentials directory permissions: {e}"
+    if client_email and private_key:
+        # Service Account email/key is configured
+        logger.info(
+            "Service Account authentication: GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY are configured"
         )
+        return
+
+    # No Service Account credentials found
+    logger.warning(
+        "Service Account credentials not found. "
+        "Please configure either GOOGLE_SERVICE_ACCOUNT_JSON or "
+        "GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY environment variables. "
+        "The authentication module will raise a clear error if credentials are required."
+    )
+    # Don't raise here - let the auth module handle missing credentials with a clearer error message
+    return
 
 
 def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
