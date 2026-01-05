@@ -814,41 +814,27 @@ class GoogleAuthenticationError(Exception):
 
 
 def get_service_account_credentials(required_scopes: List[str]):
-    """
-    Get Service Account credentials using JWT authentication.
-    
-    Args:
-        required_scopes: List of required OAuth scopes
-        
-    Returns:
-        ServiceAccountCredentials object
-        
-    Raises:
-        GoogleAuthenticationError: If Service Account credentials are not configured
-    """
-    client_email = os.getenv("GOOGLE_CLIENT_EMAIL")
-    private_key = os.getenv("GOOGLE_PRIVATE_KEY")
-    
-    if not client_email or not private_key:
+    raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not raw:
         raise GoogleAuthenticationError(
             "Service Account credentials not configured. "
-            "Please set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables."
+            "Please set GOOGLE_SERVICE_ACCOUNT_JSON environment variable."
         )
-    
-    # Replace escaped newlines in private key
-    private_key = private_key.replace('\\n', '\n')
-    
+
     try:
+        info = json.loads(raw)
+
+        # Sécurité : normalise les sauts de ligne si jamais ton JSON les échappe
+        if "private_key" in info and isinstance(info["private_key"], str):
+            info["private_key"] = info["private_key"].replace("\\n", "\n")
+
         credentials = service_account.Credentials.from_service_account_info(
-            {
-                "type": "service_account",
-                "client_email": client_email,
-                "private_key": private_key,
-            },
+            info,
             scopes=required_scopes,
         )
         logger.info("Service Account credentials created successfully")
         return credentials
+
     except Exception as e:
         error_msg = f"Failed to create Service Account credentials: {str(e)}"
         logger.error(error_msg, exc_info=True)
