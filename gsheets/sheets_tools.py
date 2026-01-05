@@ -14,6 +14,11 @@ from auth.service_decorator import require_google_service
 from core.server import server
 from core.utils import handle_http_errors, UserInputError
 from core.comments import create_comment_tools
+from utils.drive_guard import validate_drive_access, validate_drive_query_access, DriveAccessDeniedError
+from utils.request_context import log_tool_start
+from auth.service_account import get_authenticated_google_service
+from auth.agent_context import resolve_agent_context
+from auth.scopes import DRIVE_READONLY_SCOPE
 from gsheets.sheets_helpers import (
     CONDITION_TYPES,
     _build_boolean_rule,
@@ -49,12 +54,23 @@ async def list_spreadsheets(
     Returns:
         str: A formatted list of spreadsheet files (name, ID, modified time).
     """
+    log_tool_start("list_spreadsheets")
+    
     logger.info(f"[list_spreadsheets] Invoked. Email: '{user_google_email}'")
+
+    base_query = "mimeType='application/vnd.google-apps.spreadsheet'"
+    
+    # Validate Drive access and restrict query to allowed folder
+    try:
+        restricted_query = await validate_drive_query_access(service, base_query, "list_spreadsheets")
+        final_query = restricted_query
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     files_response = await asyncio.to_thread(
         service.files()
         .list(
-            q="mimeType='application/vnd.google-apps.spreadsheet'",
+            q=final_query,
             pageSize=max_results,
             fields="files(id,name,modifiedTime,webViewLink)",
             orderBy="modifiedTime desc",
@@ -102,9 +118,25 @@ async def get_spreadsheet_info(
     Returns:
         str: Formatted spreadsheet information including title, locale, and sheets list.
     """
+    log_tool_start("get_spreadsheet_info", spreadsheet_id=spreadsheet_id)
+    
     logger.info(
         f"[get_spreadsheet_info] Invoked. Email: '{user_google_email}', Spreadsheet ID: {spreadsheet_id}"
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="get_spreadsheet_info",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="get_spreadsheet_info")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     spreadsheet = await asyncio.to_thread(
         service.spreadsheets()
@@ -182,9 +214,25 @@ async def read_sheet_values(
     Returns:
         str: The formatted values from the specified range.
     """
+    log_tool_start("read_sheet_values", spreadsheet_id=spreadsheet_id, range_name=range_name)
+    
     logger.info(
         f"[read_sheet_values] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="read_sheet_values",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="read_sheet_values")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     result = await asyncio.to_thread(
         service.spreadsheets()
@@ -240,10 +288,26 @@ async def modify_sheet_values(
     Returns:
         str: Confirmation message of the successful modification operation.
     """
+    log_tool_start("modify_sheet_values", spreadsheet_id=spreadsheet_id, range_name=range_name, clear_values=clear_values)
+    
     operation = "clear" if clear_values else "write"
     logger.info(
         f"[modify_sheet_values] Invoked. Operation: {operation}, Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Range: {range_name}"
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="modify_sheet_values",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="modify_sheet_values")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Parse values if it's a JSON string (MCP passes parameters as JSON strings)
     if values is not None and isinstance(values, str):
@@ -349,12 +413,28 @@ async def format_sheet_range(
     Returns:
         str: Confirmation of the applied formatting.
     """
+    log_tool_start("format_sheet_range", spreadsheet_id=spreadsheet_id, range_name=range_name)
+    
     logger.info(
         "[format_sheet_range] Invoked. Email: '%s', Spreadsheet: %s, Range: %s",
         user_google_email,
         spreadsheet_id,
         range_name,
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="format_sheet_range",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="format_sheet_range")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     if not any([background_color, text_color, number_format_type]):
         raise UserInputError(
@@ -482,6 +562,8 @@ async def add_conditional_formatting(
     Returns:
         str: Confirmation of the added rule.
     """
+    log_tool_start("add_conditional_formatting", spreadsheet_id=spreadsheet_id, range_name=range_name, condition_type=condition_type)
+    
     logger.info(
         "[add_conditional_formatting] Invoked. Email: '%s', Spreadsheet: %s, Range: %s, Type: %s, Values: %s",
         user_google_email,
@@ -490,6 +572,20 @@ async def add_conditional_formatting(
         condition_type,
         condition_values,
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="add_conditional_formatting",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="add_conditional_formatting")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     if rule_index is not None and (not isinstance(rule_index, int) or rule_index < 0):
         raise UserInputError("rule_index must be a non-negative integer when provided.")
@@ -608,6 +704,8 @@ async def update_conditional_formatting(
     Returns:
         str: Confirmation of the updated rule and the current rule state.
     """
+    log_tool_start("update_conditional_formatting", spreadsheet_id=spreadsheet_id, rule_index=rule_index)
+    
     logger.info(
         "[update_conditional_formatting] Invoked. Email: '%s', Spreadsheet: %s, Range: %s, Rule Index: %s",
         user_google_email,
@@ -615,6 +713,20 @@ async def update_conditional_formatting(
         range_name,
         rule_index,
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="update_conditional_formatting",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="update_conditional_formatting")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     if not isinstance(rule_index, int) or rule_index < 0:
         raise UserInputError("rule_index must be a non-negative integer.")
@@ -797,6 +909,8 @@ async def delete_conditional_formatting(
     Returns:
         str: Confirmation of the deletion and the current rule state.
     """
+    log_tool_start("delete_conditional_formatting", spreadsheet_id=spreadsheet_id, rule_index=rule_index, sheet_name=sheet_name)
+    
     logger.info(
         "[delete_conditional_formatting] Invoked. Email: '%s', Spreadsheet: %s, Sheet: %s, Rule Index: %s",
         user_google_email,
@@ -804,6 +918,20 @@ async def delete_conditional_formatting(
         sheet_name,
         rule_index,
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="delete_conditional_formatting",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="delete_conditional_formatting")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     if not isinstance(rule_index, int) or rule_index < 0:
         raise UserInputError("rule_index must be a non-negative integer.")
@@ -872,6 +1000,8 @@ async def create_spreadsheet(
     Returns:
         str: Information about the newly created spreadsheet including ID, URL, and locale.
     """
+    log_tool_start("create_spreadsheet", title=title)
+    
     logger.info(
         f"[create_spreadsheet] Invoked. Email: '{user_google_email}', Title: {title}"
     )
@@ -928,9 +1058,25 @@ async def create_sheet(
     Returns:
         str: Confirmation message of the successful sheet creation.
     """
+    log_tool_start("create_sheet", spreadsheet_id=spreadsheet_id, sheet_name=sheet_name)
+    
     logger.info(
         f"[create_sheet] Invoked. Email: '{user_google_email}', Spreadsheet: {spreadsheet_id}, Sheet: {sheet_name}"
     )
+
+    # Validate Drive access (spreadsheet_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="create_sheet",
+        )
+        await validate_drive_access(drive_service, file_id=spreadsheet_id, tool_name="create_sheet")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     request_body = {"requests": [{"addSheet": {"properties": {"title": sheet_name}}}]}
 

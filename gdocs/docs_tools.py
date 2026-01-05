@@ -16,6 +16,11 @@ from auth.service_decorator import require_google_service, require_multiple_serv
 from core.utils import extract_office_xml_text, handle_http_errors
 from core.server import server
 from core.comments import create_comment_tools
+from utils.drive_guard import validate_drive_access, validate_drive_query_access, DriveAccessDeniedError
+from utils.request_context import log_tool_start
+from auth.service_account import get_authenticated_google_service
+from auth.agent_context import resolve_agent_context
+from auth.scopes import DRIVE_READONLY_SCOPE
 
 # Import helper functions for document operations
 from gdocs.docs_helpers import (
@@ -65,14 +70,24 @@ async def search_docs(
     Returns:
         str: A formatted list of Google Docs matching the search query.
     """
+    log_tool_start("search_docs", query=query)
+    
     logger.info(f"[search_docs] Email={user_google_email}, Query='{query}'")
 
     escaped_query = query.replace("'", "\\'")
+    base_query = f"name contains '{escaped_query}' and mimeType='application/vnd.google-apps.document' and trashed=false"
+
+    # Validate Drive access and restrict query to allowed folder
+    try:
+        restricted_query = await validate_drive_query_access(service, base_query, "search_docs")
+        final_query = restricted_query
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     response = await asyncio.to_thread(
         service.files()
         .list(
-            q=f"name contains '{escaped_query}' and mimeType='application/vnd.google-apps.document' and trashed=false",
+            q=final_query,
             pageSize=page_size,
             fields="files(id, name, createdTime, modifiedTime, webViewLink)",
             supportsAllDrives=True,
@@ -118,9 +133,17 @@ async def get_doc_content(
     Returns:
         str: The document content with metadata header.
     """
+    log_tool_start("get_doc_content", document_id=document_id)
+    
     logger.info(
         f"[get_doc_content] Invoked. Document/File ID: '{document_id}' for user '{user_google_email}'"
     )
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="get_doc_content")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Step 2: Get file metadata from Drive
     file_metadata = await asyncio.to_thread(
@@ -289,9 +312,17 @@ async def list_docs_in_folder(
     Returns:
         str: A formatted list of Google Docs in the specified folder.
     """
+    log_tool_start("list_docs_in_folder", folder_id=folder_id)
+    
     logger.info(
         f"[list_docs_in_folder] Invoked. Email: '{user_google_email}', Folder ID: '{folder_id}'"
     )
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, folder_id=folder_id, tool_name="list_docs_in_folder")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     rsp = await asyncio.to_thread(
         service.files()
@@ -330,6 +361,8 @@ async def create_doc(
     Returns:
         str: Confirmation message with document ID and link.
     """
+    log_tool_start("create_doc", title=title)
+    
     logger.info(f"[create_doc] Invoked. Email: '{user_google_email}', Title='{title}'")
 
     doc = await asyncio.to_thread(
@@ -389,10 +422,26 @@ async def modify_doc_text(
     Returns:
         str: Confirmation message with operation details
     """
+    log_tool_start("modify_doc_text", document_id=document_id, start_index=start_index, end_index=end_index)
+    
     logger.info(
         f"[modify_doc_text] Doc={document_id}, start={start_index}, end={end_index}, text={text is not None}, "
         f"formatting={any([bold, italic, underline, font_size, font_family, text_color, background_color])}"
     )
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="modify_doc_text",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="modify_doc_text")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Input validation
     validator = ValidationManager()
@@ -584,9 +633,25 @@ async def find_and_replace_doc(
     Returns:
         str: Confirmation message with replacement count
     """
+    log_tool_start("find_and_replace_doc", document_id=document_id, find_text=find_text)
+    
     logger.info(
         f"[find_and_replace_doc] Doc={document_id}, find='{find_text}', replace='{replace_text}'"
     )
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="find_and_replace_doc",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="find_and_replace_doc")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     requests = [create_find_replace_request(find_text, replace_text, match_case)]
 
@@ -637,9 +702,25 @@ async def insert_doc_elements(
     Returns:
         str: Confirmation message with insertion details
     """
+    log_tool_start("insert_doc_elements", document_id=document_id, element_type=element_type, index=index)
+    
     logger.info(
         f"[insert_doc_elements] Doc={document_id}, type={element_type}, index={index}"
     )
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="insert_doc_elements",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="insert_doc_elements")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Handle the special case where we can't insert at the first section break
     # If index is 0, bump it to 1 to avoid the section break
@@ -725,6 +806,8 @@ async def insert_doc_image(
     Returns:
         str: Confirmation message with insertion details
     """
+    log_tool_start("insert_doc_image", document_id=document_id, image_source=image_source, index=index)
+    
     logger.info(
         f"[insert_doc_image] Doc={document_id}, source={image_source}, index={index}"
     )
@@ -741,6 +824,12 @@ async def insert_doc_image(
     )
 
     if is_drive_file:
+        # Validate Drive access for image file
+        try:
+            await validate_drive_access(drive_service, file_id=image_source, tool_name="insert_doc_image")
+        except DriveAccessDeniedError as e:
+            raise Exception(f"Drive access denied: {str(e)}")
+
         # Verify Drive file exists and get metadata
         try:
             file_metadata = await asyncio.to_thread(
@@ -805,7 +894,23 @@ async def update_doc_headers_footers(
     Returns:
         str: Confirmation message with update details
     """
+    log_tool_start("update_doc_headers_footers", document_id=document_id, section_type=section_type)
+    
     logger.info(f"[update_doc_headers_footers] Doc={document_id}, type={section_type}")
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="update_doc_headers_footers",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="update_doc_headers_footers")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Input validation
     validator = ValidationManager()
@@ -867,7 +972,23 @@ async def batch_update_doc(
     Returns:
         str: Confirmation message with batch operation results
     """
+    log_tool_start("batch_update_doc", document_id=document_id)
+    
     logger.debug(f"[batch_update_doc] Doc={document_id}, operations={len(operations)}")
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="batch_update_doc",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="batch_update_doc")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Input validation
     validator = ValidationManager()
@@ -936,7 +1057,23 @@ async def inspect_doc_structure(
     Returns:
         str: JSON string containing document structure and safe insertion indices
     """
+    log_tool_start("inspect_doc_structure", document_id=document_id, detailed=detailed)
+    
     logger.debug(f"[inspect_doc_structure] Doc={document_id}, detailed={detailed}")
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="inspect_doc_structure",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="inspect_doc_structure")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Get the document
     doc = await asyncio.to_thread(
@@ -1075,7 +1212,23 @@ async def create_table_with_data(
     Returns:
         str: Confirmation with table details and link
     """
+    log_tool_start("create_table_with_data", document_id=document_id, index=index)
+    
     logger.debug(f"[create_table_with_data] Doc={document_id}, index={index}")
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="create_table_with_data",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="create_table_with_data")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Input validation
     validator = ValidationManager()
@@ -1167,9 +1320,25 @@ async def debug_table_structure(
     Returns:
         str: Detailed JSON structure showing table layout, cell positions, and current content
     """
+    log_tool_start("debug_table_structure", document_id=document_id, table_index=table_index)
+    
     logger.debug(
         f"[debug_table_structure] Doc={document_id}, table_index={table_index}"
     )
+
+    # Validate Drive access (document_id is also a Drive file_id)
+    try:
+        _, user_email, _ = resolve_agent_context()
+        drive_service, _ = await get_authenticated_google_service(
+            service_name="drive",
+            version="v3",
+            user_google_email=user_email,
+            required_scopes=[DRIVE_READONLY_SCOPE],
+            tool_name="debug_table_structure",
+        )
+        await validate_drive_access(drive_service, file_id=document_id, tool_name="debug_table_structure")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Get the document
     doc = await asyncio.to_thread(
@@ -1230,9 +1399,17 @@ async def export_doc_to_pdf(
     Returns:
         str: Confirmation message with PDF file details and links
     """
+    log_tool_start("export_doc_to_pdf", document_id=document_id, folder_id=folder_id)
+    
     logger.info(
         f"[export_doc_to_pdf] Email={user_google_email}, Doc={document_id}, pdf_filename={pdf_filename}, folder_id={folder_id}"
     )
+
+    # Validate Drive access for document and folder
+    try:
+        await validate_drive_access(service, file_id=document_id, folder_id=folder_id, tool_name="export_doc_to_pdf")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Get file metadata first to validate it's a Google Doc
     try:

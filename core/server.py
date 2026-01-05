@@ -24,6 +24,7 @@ from core.config import (
     get_transport_mode,
     set_transport_mode as _set_transport_mode,
 )
+from utils.request_context import get_request_context
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,15 +73,47 @@ def _ensure_legacy_callback_route() -> None:
     if _legacy_callback_registered:
         return
     # Block OAuth callback route
-    @server.custom_route("/oauth2callback", methods=["GET"])
+    @server.custom_route("/oauth2callback", methods=["GET", "POST"])
     async def block_oauth_callback(request: Request):
-        logger.warning("OAuth not supported for this MCP")
+        logger.warning(
+            f"OAuth callback blocked - Service Account only. Request from: {request.client.host if request.client else 'unknown'}"
+        )
         from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=403,
-            content={"error": "OAuth not supported for this MCP. Service Account authentication only."}
+            content={
+                "error": "OAuth authentication is not supported. This MCP uses Service Account authentication only.",
+                "message": "Please configure GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY environment variables.",
+                "documentation": "See README for Domain-Wide Delegation setup instructions."
+            }
         )
     _legacy_callback_registered = True
+
+
+@server.custom_route("/debug/headers", methods=["GET"])
+async def debug_headers(request: Request):
+    """Debug endpoint to inspect headers forwarded by Dust."""
+    import os
+    
+    # Protection : vérifier ENABLE_DEBUG ou auth
+    if os.getenv("ENABLE_DEBUG") != "true":
+        return JSONResponse({"error": "Debug endpoint disabled"}, status_code=403)
+    
+    # Filtrer headers sensibles
+    safe_headers = {}
+    allowed = ["X-Agent", "X-End-User-Id", "X-Telegram-User-Id", "X-User-Id", "X-Request-Id"]
+    for key in allowed:
+        if key in request.headers:
+            safe_headers[key] = request.headers[key]
+    
+    # Get request context
+    context = get_request_context()
+    
+    return JSONResponse({
+        "headers": safe_headers,
+        "all_header_keys": [k for k in request.headers.keys() if k.startswith("X-")],
+        "context": context,
+    })
 
 
 def configure_server_for_http():
@@ -148,74 +181,7 @@ async def serve_attachment(file_id: str, request: Request):
     )
 
 
-async def legacy_oauth2_callback(request: Request) -> HTMLResponse:
-    from auth.google_auth import handle_auth_callback, check_client_secrets
-    from auth.oauth21_session_store import get_oauth21_session_store
-    from core.config import get_oauth_redirect_uri
-
-    state = request.query_params.get("state")
-    code = request.query_params.get("code")
-    error = request.query_params.get("error")
-
-    if error:
-        msg = (
-            f"Authentication failed: Google returned an error: {error}. State: {state}."
-        )
-        logger.error(msg)
-        return create_error_response(msg)
-
-    if not code:
-        msg = "Authentication failed: No authorization code received from Google."
-        logger.error(msg)
-        return create_error_response(msg)
-
-    try:
-        error_message = check_client_secrets()
-        if error_message:
-            return create_server_error_response(error_message)
-
-        logger.info(f"OAuth callback: Received code (state: {state}).")
-
-        mcp_session_id = None
-        if hasattr(request, "state") and hasattr(request.state, "session_id"):
-            mcp_session_id = request.state.session_id
-
-        verified_user_id, credentials = handle_auth_callback(
-            scopes=get_current_scopes(),
-            authorization_response=str(request.url),
-            redirect_uri=get_oauth_redirect_uri(),
-            session_id=mcp_session_id,
-        )
-
-        logger.info(
-            f"OAuth callback: Successfully authenticated user: {verified_user_id}."
-        )
-
-        try:
-            store = get_oauth21_session_store()
-
-            store.store_session(
-                user_email=verified_user_id,
-                access_token=credentials.token,
-                refresh_token=credentials.refresh_token,
-                token_uri=credentials.token_uri,
-                client_id=credentials.client_id,
-                client_secret=credentials.client_secret,
-                scopes=credentials.scopes,
-                expiry=credentials.expiry,
-                session_id=f"google-{state}",
-                mcp_session_id=mcp_session_id,
-            )
-            logger.info(
-                f"Stored Google credentials in OAuth 2.1 session store for {verified_user_id}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to store credentials in OAuth 2.1 store: {e}")
-
-        return create_success_response(verified_user_id)
-    except Exception as e:
-        logger.error(f"Error processing OAuth callback: {str(e)}", exc_info=True)
-        return create_server_error_response(str(e))
+# legacy_oauth2_callback removed - OAuth is not supported, Service Account only
 
 
 @server.tool()
@@ -224,7 +190,63 @@ async def start_google_auth(
 ) -> str:
     """
     OAuth authentication is not supported. This MCP uses Service Account authentication only.
-    Please ensure GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables are set.
+
+    This tool is kept for backward compatibility but always returns an error.
+    Authentication is handled automatically via Service Account with Domain-Wide Delegation.
+
+    To configure Service Account authentication:
+    1. Set GOOGLE_SERVICE_ACCOUNT_JSON environment variable (full JSON), OR
+    2. Set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables
+
+    Additionally, configure agent context:
+    - BEATUS_USER_EMAIL: Google email for Beatus agent
+    - HILDEGARDE_USER_EMAIL: Google email for Hildegarde agent
+    - BEATUS_DRIVE_FOLDER_ID: Drive folder ID allowlist for Beatus
+    - HILDEGARDE_DRIVE_FOLDER_ID: Drive folder ID allowlist for Hildegarde
+
+    See README for Domain-Wide Delegation setup instructions.
     """
-    logger.warning("OAuth not supported for this MCP")
-    raise ValueError("OAuth authentication is not supported. This MCP uses Service Account authentication only. Please ensure GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables are configured.")
+    logger.warning(
+        f"start_google_auth called but OAuth is not supported. "
+        f"Service Account authentication is used automatically. "
+        f"Service: {service_name}, User: {user_google_email}"
+    )
+    return (
+        "OAuth authentication is not supported. This MCP uses Service Account authentication only.\n\n"
+        "Authentication is handled automatically via Service Account with Domain-Wide Delegation.\n\n"
+        "Configuration required:\n"
+        "- GOOGLE_SERVICE_ACCOUNT_JSON (or GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY)\n"
+        "- BEATUS_USER_EMAIL / HILDEGARDE_USER_EMAIL\n"
+        "- BEATUS_DRIVE_FOLDER_ID / HILDEGARDE_DRIVE_FOLDER_ID\n\n"
+        "See README for Domain-Wide Delegation setup instructions."
+    )
+
+
+@server.tool()
+async def debug_headers() -> str:
+    """Debug tool to inspect headers forwarded by Dust and current request context."""
+    from fastmcp.server.dependencies import get_context
+    import json
+    
+    context = get_request_context()
+    
+    # Try to get raw headers from FastMCP context if available
+    raw_headers = {}
+    try:
+        ctx = get_context()
+        if ctx:
+            request = ctx.get_state("request")
+            if request and hasattr(request, "headers"):
+                allowed = ["X-Agent", "X-End-User-Id", "X-Telegram-User-Id", "X-User-Id", "X-Request-Id"]
+                for key in allowed:
+                    if key in request.headers:
+                        raw_headers[key] = request.headers[key]
+    except Exception as e:
+        logger.debug(f"Could not get headers from context: {e}")
+    
+    result = {
+        "context": context,
+        "headers": raw_headers,
+    }
+    
+    return json.dumps(result, indent=2, ensure_ascii=False)

@@ -14,6 +14,8 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.utils import handle_http_errors
 from core.server import server
+from utils.drive_guard import validate_drive_access, DriveAccessDeniedError
+from utils.request_context import log_tool_start
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +38,19 @@ async def list_templates(
     Returns:
         Dict with a "templates" array of file metadata entries.
     """
+    log_tool_start("list_templates", folder_id=folder_id)
+    
     logger.info("[list_templates] user=%s folder=%s", user_google_email, folder_id)
 
     target_folder_id = folder_id or os.getenv("TEMPLATE_FOLDER_ID")
     if not target_folder_id:
         raise ValueError("TEMPLATE_FOLDER_ID is not configured")
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, folder_id=target_folder_id, tool_name="list_templates")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     response = await asyncio.to_thread(
         service.files()
@@ -79,11 +89,19 @@ async def duplicate_template(
     Returns:
         Dict containing the new document ID and view link.
     """
+    log_tool_start("duplicate_template", template_id=template_id, new_name=new_name, destination_folder_id=destination_folder_id)
+    
     logger.info(
         "[duplicate_template] user=%s template=%s new_name=%s", user_google_email, template_id, new_name
     )
 
     target_folder_id = destination_folder_id or os.getenv("OUTPUT_FOLDER_ID")
+
+    # Validate Drive access for template and destination folder
+    try:
+        await validate_drive_access(service, file_id=template_id, folder_id=target_folder_id, tool_name="duplicate_template")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     metadata = await asyncio.to_thread(
         service.files()
@@ -131,6 +149,8 @@ async def fill_template_variables(
     Returns:
         Dict with status and number of replacements made.
     """
+    log_tool_start("fill_template_variables", document_id=document_id)
+    
     logger.info("[fill_template_variables] user=%s document=%s", user_google_email, document_id)
 
     if not variables:
@@ -186,9 +206,17 @@ async def export_pdf(
     Returns:
         Dict containing the exported PDF file metadata (ID, name, webViewLink).
     """
+    log_tool_start("export_pdf", document_id=document_id, destination_folder_id=destination_folder_id)
+    
     logger.info("[export_pdf] user=%s document=%s", user_google_email, document_id)
 
     target_folder_id = destination_folder_id or os.getenv("OUTPUT_FOLDER_ID")
+
+    # Validate Drive access for document and destination folder
+    try:
+        await validate_drive_access(drive_service, file_id=document_id, folder_id=target_folder_id, tool_name="export_pdf")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     metadata = await asyncio.to_thread(
         drive_service.files()

@@ -28,6 +28,8 @@ from gdrive.drive_helpers import (
     resolve_drive_item,
     resolve_folder_id,
 )
+from utils.drive_guard import validate_drive_access, validate_drive_query_access, DriveAccessDeniedError
+from utils.request_context import log_tool_start
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +65,18 @@ async def search_drive_files(
     Returns:
         str: A formatted list of found files/folders with their details (ID, name, type, size, modified time, link).
     """
+    log_tool_start("search_drive_files", query=query, drive_id=drive_id)
+    
     logger.info(
         f"[search_drive_files] Invoked. Email: '{user_google_email}', Query: '{query}'"
     )
+
+    # Validate Drive access and restrict query to allowed folder
+    try:
+        restricted_query = await validate_drive_query_access(service, query, "search_drive_files")
+        query = restricted_query
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Check if the query looks like a structured Drive query or free text
     # Look for Drive API operators and structured query patterns
@@ -132,7 +143,15 @@ async def get_drive_file_content(
     Returns:
         str: The file content as plain text with metadata header.
     """
+    log_tool_start("get_drive_file_content", file_id=file_id)
+    
     logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, file_id=file_id, tool_name="get_drive_file_content")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     resolved_file_id, file_metadata = await resolve_drive_item(
         service,
@@ -231,9 +250,17 @@ async def get_drive_file_download_url(
     Returns:
         str: Download URL and file metadata. The file is available at the URL for 1 hour.
     """
+    log_tool_start("get_drive_file_download_url", file_id=file_id, export_format=export_format)
+    
     logger.info(
         f"[get_drive_file_download_url] Invoked. File ID: '{file_id}', Export format: {export_format}"
     )
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, file_id=file_id, tool_name="get_drive_file_download_url")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     # Resolve shortcuts and get file metadata
     resolved_file_id, file_metadata = await resolve_drive_item(
@@ -406,9 +433,17 @@ async def list_drive_items(
     Returns:
         str: A formatted list of files/folders in the specified folder.
     """
+    log_tool_start("list_drive_items", folder_id=folder_id, drive_id=drive_id)
+    
     logger.info(
         f"[list_drive_items] Invoked. Email: '{user_google_email}', Folder ID: '{folder_id}'"
     )
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, folder_id=folder_id, tool_name="list_drive_items")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     resolved_folder_id = await resolve_folder_id(service, folder_id)
     final_query = f"'{resolved_folder_id}' in parents and trashed=false"
@@ -465,9 +500,17 @@ async def create_drive_file(
     Returns:
         str: Confirmation message of the successful file creation with file link.
     """
+    log_tool_start("create_drive_file", file_name=file_name, folder_id=folder_id, mime_type=mime_type)
+    
     logger.info(
         f"[create_drive_file] Invoked. Email: '{user_google_email}', File Name: {file_name}, Folder ID: {folder_id}, fileUrl: {fileUrl}"
     )
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, folder_id=folder_id, tool_name="create_drive_file")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     if not content and not fileUrl:
         raise Exception("You must provide either 'content' or 'fileUrl'.")
@@ -693,9 +736,17 @@ async def get_drive_file_permissions(
     Returns:
         str: Detailed file metadata including sharing status and URLs.
     """
+    log_tool_start("get_drive_file_permissions", file_id=file_id)
+    
     logger.info(
         f"[get_drive_file_permissions] Checking file {file_id} for {user_google_email}"
     )
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, file_id=file_id, tool_name="get_drive_file_permissions")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     resolved_file_id, _ = await resolve_drive_item(service, file_id)
     file_id = resolved_file_id
@@ -819,8 +870,11 @@ async def check_drive_file_public_access(
     Returns:
         str: Information about the file's sharing status and whether it can be used in Google Docs.
     """
+    log_tool_start("check_drive_file_public_access", file_name=file_name)
+    
     logger.info(f"[check_drive_file_public_access] Searching for {file_name}")
 
+    # Note: This function searches by name, so we validate after finding the file
     # Search for the file
     escaped_name = file_name.replace("'", "\\'")
     query = f"name = '{escaped_name}'"
@@ -850,6 +904,13 @@ async def check_drive_file_public_access(
 
     # Check permissions for the first file
     file_id = files[0]["id"]
+    
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, file_id=file_id, tool_name="check_drive_file_public_access")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
+    
     resolved_file_id, _ = await resolve_drive_item(service, file_id)
     file_id = resolved_file_id
 
@@ -940,7 +1001,15 @@ async def update_drive_file(
     Returns:
         str: Confirmation message with details of the updates applied.
     """
+    log_tool_start("update_drive_file", file_id=file_id, add_parents=add_parents, remove_parents=remove_parents)
+    
     logger.info(f"[update_drive_file] Updating file {file_id} for {user_google_email}")
+
+    # Validate Drive access
+    try:
+        await validate_drive_access(service, file_id=file_id, tool_name="update_drive_file")
+    except DriveAccessDeniedError as e:
+        raise Exception(f"Drive access denied: {str(e)}")
 
     current_file_fields = (
         "name, description, mimeType, parents, starred, trashed, webViewLink, "
