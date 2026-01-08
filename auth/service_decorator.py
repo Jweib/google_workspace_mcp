@@ -14,14 +14,11 @@ from auth.service_account import (
     get_authenticated_google_service,
     ServiceAccountError,
 )
-from auth.agent_context import (
-    resolve_agent_context,
-    get_agent_user_email,
-    AgentContextError,
-)
 from core.context import set_fastmcp_session_id
+import os
 from fastmcp.server.dependencies import get_context
 from auth.scopes import (
+    DRIVE_SCOPE,
     GMAIL_READONLY_SCOPE,
     GMAIL_SEND_SCOPE,
     GMAIL_COMPOSE_SCOPE,
@@ -71,59 +68,32 @@ def _get_mcp_session_id(tool_name: str) -> Optional[str]:
     return None
 
 
-def _resolve_agent_user_email(
-    args: tuple,
-    kwargs: dict,
-    wrapper_sig: inspect.Signature,
-    tool_name: str,
-) -> str:
+def _get_impersonate_email(tool_name: str) -> str:
     """
-    Resolve user_google_email from agent context or function arguments.
-
-    Priority:
-    1. Agent context (from X-Agent header or context state)
-    2. Function argument user_google_email (if provided)
+    Get the Google email to impersonate from GOOGLE_IMPERSONATE_EMAIL environment variable.
 
     Args:
-        args: Positional arguments passed to wrapper
-        kwargs: Keyword arguments passed to wrapper
-        wrapper_sig: Function signature for parameter binding
         tool_name: Name of the calling tool (for logging)
 
     Returns:
         User email string
 
     Raises:
-        AgentContextError: If agent context cannot be resolved and no email provided
+        ServiceAccountError: If GOOGLE_IMPERSONATE_EMAIL is not configured
     """
-    # Try to get from agent context first
-    try:
-        agent_name, user_email, folder_id = resolve_agent_context()
-        logger.debug(
-            f"[{tool_name}] Resolved user email from agent context: {user_email} (agent: {agent_name})"
+    impersonate_email = os.getenv("GOOGLE_IMPERSONATE_EMAIL")
+    if not impersonate_email:
+        error_msg = (
+            f"GOOGLE_IMPERSONATE_EMAIL missing. "
+            f"Set this environment variable to the Google email to impersonate via Domain-Wide Delegation."
         )
-        return user_email
-    except AgentContextError as e:
-        logger.debug(f"[{tool_name}] Could not resolve agent context: {e}")
-
-    # Fallback to function argument
-    try:
-        bound_args = wrapper_sig.bind(*args, **kwargs)
-        bound_args.apply_defaults()
-        user_google_email = bound_args.arguments.get("user_google_email")
-        if user_google_email:
-            logger.debug(
-                f"[{tool_name}] Using user_google_email from function argument: {user_google_email}"
-            )
-            return user_google_email
-    except Exception as e:
-        logger.debug(f"[{tool_name}] Could not extract user_google_email from arguments: {e}")
-
-    # If neither works, raise error
-    raise AgentContextError(
-        f"Could not resolve user_google_email for {tool_name}. "
-        "Please ensure agent context is configured (X-Agent header) or provide user_google_email parameter."
+        logger.error(f"[{tool_name}] {error_msg}")
+        raise ServiceAccountError(error_msg)
+    
+    logger.debug(
+        f"[{tool_name}] Using GOOGLE_IMPERSONATE_EMAIL: {impersonate_email}"
     )
+    return impersonate_email
 
 
 # Service configuration mapping
@@ -151,7 +121,7 @@ SCOPE_GROUPS = {
     "gmail_labels": GMAIL_LABELS_SCOPE,
     "gmail_settings_basic": GMAIL_SETTINGS_BASIC_SCOPE,
     # Drive scopes
-    "drive_read": DRIVE_READONLY_SCOPE,
+    "drive_read": DRIVE_SCOPE,
     "drive_file": DRIVE_FILE_SCOPE,
     # Docs scopes
     "docs_read": DOCS_READONLY_SCOPE,
@@ -207,8 +177,8 @@ def require_google_service(
     Decorator that automatically handles Google service authentication using Service Account.
 
     This decorator uses Service Account with Domain-Wide Delegation to authenticate
-    Google services. The user email is resolved from agent context (X-Agent header)
-    or from function arguments.
+    Google services. The user email is read from GOOGLE_IMPERSONATE_EMAIL environment variable.
+    The user_google_email parameter in tool signatures is kept for compatibility but ignored.
 
     Args:
         service_type: Type of Google service ("gmail", "drive", "calendar", etc.)
@@ -219,7 +189,7 @@ def require_google_service(
         @require_google_service("gmail", "gmail_read")
         async def search_messages(service, user_google_email: str, query: str):
             # service parameter is automatically injected
-            # user_google_email is resolved from agent context or function argument
+            # user_google_email is kept for compatibility but ignored (uses GOOGLE_IMPERSONATE_EMAIL)
     """
 
     def decorator(func: Callable) -> Callable:
@@ -234,21 +204,19 @@ def require_google_service(
             )
 
         # Create a new signature for the wrapper that excludes the 'service' parameter.
-        # Keep 'user_google_email' in signature (it can be provided or resolved from agent context)
+        # Keep 'user_google_email' in signature (for compatibility, even though it's ignored)
         wrapper_sig = original_sig.replace(parameters=params[1:])
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
             tool_name = func.__name__
 
-            # Resolve user_google_email from agent context or function arguments
+            # Get impersonate email from environment variable
             try:
-                user_google_email = _resolve_agent_user_email(
-                    args, kwargs, wrapper_sig, tool_name
-                )
-            except AgentContextError as e:
-                logger.error(f"[{tool_name}] Failed to resolve user email: {e}")
-                raise
+                user_google_email = _get_impersonate_email(tool_name)
+            except ServiceAccountError as e:
+                logger.error(f"[{tool_name}] Failed to get impersonate email: {e}")
+                raise Exception(f"Authentication configuration error: {str(e)}")
 
             # Get service configuration from the decorator's arguments
             if service_type not in SERVICE_CONFIGS:
@@ -277,8 +245,8 @@ def require_google_service(
                 )
                 raise Exception(f"Authentication failed: {str(e)}")
 
-            # Update user_google_email in kwargs if it was resolved from agent context
-            # and not provided as argument
+            # Update user_google_email in kwargs if not provided as argument
+            # (for compatibility, even though it's ignored)
             if "user_google_email" not in kwargs:
                 bound_args = wrapper_sig.bind(*args, **kwargs)
                 bound_args.apply_defaults()
@@ -301,7 +269,8 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
     Decorator for functions that need multiple Google services.
 
     All services are authenticated using Service Account with Domain-Wide Delegation.
-    The user email is resolved from agent context (X-Agent header) or from function arguments.
+    The user email is read from GOOGLE_IMPERSONATE_EMAIL environment variable.
+    The user_google_email parameter in tool signatures is kept for compatibility but ignored.
 
     Args:
         service_configs: List of service configurations, each containing:
@@ -317,7 +286,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
         ])
         async def get_doc_with_metadata(drive_service, docs_service, user_google_email: str, doc_id: str):
             # Both services are automatically injected
-            # user_google_email is resolved from agent context or function argument
+            # user_google_email is kept for compatibility but ignored (uses GOOGLE_IMPERSONATE_EMAIL)
     """
 
     def decorator(func: Callable) -> Callable:
@@ -327,7 +296,7 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
         params = list(original_sig.parameters.values())
 
         # Remove injected service params from the wrapper signature
-        # Keep 'user_google_email' in signature (it can be provided or resolved from agent context)
+        # Keep 'user_google_email' in signature (for compatibility, even though it's ignored)
         filtered_params = [
             p for p in params if p.name not in service_param_names
         ]
@@ -337,14 +306,12 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
         async def wrapper(*args, **kwargs):
             tool_name = func.__name__
 
-            # Resolve user_google_email from agent context or function arguments
+            # Get impersonate email from environment variable
             try:
-                user_google_email = _resolve_agent_user_email(
-                    args, kwargs, wrapper_sig, tool_name
-                )
-            except AgentContextError as e:
-                logger.error(f"[{tool_name}] Failed to resolve user email: {e}")
-                raise
+                user_google_email = _get_impersonate_email(tool_name)
+            except ServiceAccountError as e:
+                logger.error(f"[{tool_name}] Failed to get impersonate email: {e}")
+                raise Exception(f"Authentication configuration error: {str(e)}")
 
             # Authenticate all services
             for config in service_configs:
@@ -380,8 +347,8 @@ def require_multiple_services(service_configs: List[Dict[str, Any]]):
                     )
                     raise Exception(f"Authentication failed for {service_type}: {str(e)}")
 
-            # Update user_google_email in kwargs if it was resolved from agent context
-            # and not provided as argument
+            # Update user_google_email in kwargs if not provided as argument
+            # (for compatibility, even though it's ignored)
             if "user_google_email" not in kwargs:
                 bound_args = wrapper_sig.bind(*args, **kwargs)
                 bound_args.apply_defaults()

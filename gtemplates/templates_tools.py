@@ -7,15 +7,19 @@ import asyncio
 import io
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 from auth.service_decorator import require_google_service, require_multiple_services
 from core.utils import handle_http_errors
 from core.server import server
-from utils.drive_guard import validate_drive_access, DriveAccessDeniedError
 from utils.request_context import log_tool_start
+from gtemplates.templates_helpers import (
+    resolve_templates_folder,
+    find_template_by_name,
+    find_document_by_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,38 +29,71 @@ logger = logging.getLogger(__name__)
 @require_google_service("drive", "drive_read")
 async def list_templates(
     service: Any,
-    user_google_email: str,
-    folder_id: str | None = None,
+    user_google_email: str,  # Optionnel, ignoré (compat Dust)
+    bot_folder_id: str | None = None,
+    folder_id: str | None = None,  # Legacy/expert: utiliser directement
+    templates_folder_name: str = "Templates",
+    page_size: int = 100,
+    query: str | None = None,
 ) -> Dict[str, List[Dict[str, str]]]:
     """
-    List template files within a specific Drive folder.
+    List template files within a Templates folder.
 
     Args:
-        user_google_email: Email of the requesting user (injected by auth middleware).
-        folder_id: Drive folder ID containing templates. Defaults to TEMPLATE_FOLDER_ID env var.
+        user_google_email: Email of the requesting user (ignored, kept for compatibility).
+        bot_folder_id: ID of the bot folder containing the Templates subfolder. 
+                       The agent should first search for this folder using search_drive_files.
+        folder_id: Legacy/expert mode - use this folder directly if provided.
+        templates_folder_name: Name of the templates folder (default: "Templates").
+        page_size: Maximum number of templates to return (default: 100).
+        query: Optional query filter (e.g., "name contains 'Contract'").
 
     Returns:
         Dict with a "templates" array of file metadata entries.
     """
-    log_tool_start("list_templates", folder_id=folder_id)
+    log_tool_start("list_templates", bot_folder_id=bot_folder_id, folder_id=folder_id, templates_folder_name=templates_folder_name)
     
-    logger.info("[list_templates] user=%s folder=%s", user_google_email, folder_id)
+    logger.info("[list_templates] user=%s bot_folder_id=%s folder_id=%s", user_google_email, bot_folder_id, folder_id)
 
-    target_folder_id = folder_id or os.getenv("TEMPLATE_FOLDER_ID")
-    if not target_folder_id:
-        raise ValueError("TEMPLATE_FOLDER_ID is not configured")
+    # Support legacy: if folder_id provided, use it directly (expert mode)
+    if folder_id:
+        target_folder_id = folder_id
+        logger.debug("[list_templates] Using legacy folder_id (expert mode)")
+    elif bot_folder_id:
+        # Resolve BOT/Templates using provided bot_folder_id
+        target_folder_id = await resolve_templates_folder(
+            service, bot_folder_id, templates_folder_name
+        )
+    else:
+        # Fallback to BOT_FOLDER_ID env var if set
+        env_bot_folder_id = os.getenv("BOT_FOLDER_ID")
+        if env_bot_folder_id:
+            target_folder_id = await resolve_templates_folder(
+                service, env_bot_folder_id, templates_folder_name
+            )
+        else:
+            # No bot_folder_id provided - search for templates folder in entire Drive
+            # This allows the agent prompt to control which folder to use
+            raise ValueError(
+                "bot_folder_id is required. Provide the ID of the bot folder containing the Templates subfolder. "
+                "The agent should first search for the bot folder using search_drive_files."
+            )
 
-    # Validate Drive access
-    try:
-        await validate_drive_access(service, folder_id=target_folder_id, tool_name="list_templates")
-    except DriveAccessDeniedError as e:
-        raise Exception(f"Drive access denied: {str(e)}")
+    # Build query
+    base_query = f"'{target_folder_id}' in parents and trashed=false"
+    if query:
+        # Apply additional query filter
+        escaped_query = query.replace("'", "\\'")
+        final_query = f"{base_query} and ({escaped_query})"
+    else:
+        final_query = base_query
 
     response = await asyncio.to_thread(
         service.files()
         .list(
-            q=f"'{target_folder_id}' in parents and trashed=false",
-            fields="files(id, name, mimeType, webViewLink)",
+            q=final_query,
+            pageSize=page_size,
+            fields="files(id, name, mimeType, modifiedTime, webViewLink)",
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
         )
@@ -69,48 +106,97 @@ async def list_templates(
 
 @server.tool()
 @handle_http_errors("duplicate_template", service_type="drive")
-@require_google_service("drive", "drive_file")
+@require_google_service("drive", "drive_read")  # Use full drive scope for DWD compatibility
 async def duplicate_template(
     service: Any,
-    user_google_email: str,
-    template_id: str,
+    user_google_email: str,  # Optionnel, ignoré (compat Dust)
     new_name: str,
+    bot_folder_id: str | None = None,
+    template_id: str | None = None,  # Legacy/expert: utiliser directement
+    template_name: str | None = None,  # Si template_id absent
+    templates_folder_name: str = "Templates",
+    destination_subfolder_name: str | None = None,
     destination_folder_id: str | None = None,
 ) -> Dict[str, str]:
     """
     Duplicate a Google Docs template using Drive files.copy.
 
     Args:
-        user_google_email: Email of the requesting user (injected by auth middleware).
-        template_id: Drive file ID of the template (expects Google Doc).
+        user_google_email: Email of the requesting user (ignored, kept for compatibility).
+        bot_folder_id: ID of the bot folder containing the Templates subfolder.
+                       Required when using template_name. The agent should first search 
+                       for this folder using search_drive_files.
+        template_id: Legacy/expert mode - use this template ID directly if provided.
+        template_name: Name of the template to find (required if template_id not provided).
         new_name: Name for the duplicated document.
-        destination_folder_id: Optional folder ID for the copy (defaults to OUTPUT_FOLDER_ID env var).
+        templates_folder_name: Name of the templates folder (default: "Templates").
+        destination_subfolder_name: Name of subfolder in bot folder for the copy (e.g., "Output").
+        destination_folder_id: Legacy/expert mode - use this folder ID directly if provided.
 
     Returns:
         Dict containing the new document ID and view link.
     """
-    log_tool_start("duplicate_template", template_id=template_id, new_name=new_name, destination_folder_id=destination_folder_id)
+    log_tool_start("duplicate_template", bot_folder_id=bot_folder_id, template_id=template_id, template_name=template_name, new_name=new_name)
     
     logger.info(
-        "[duplicate_template] user=%s template=%s new_name=%s", user_google_email, template_id, new_name
+        "[duplicate_template] user=%s template_id=%s template_name=%s new_name=%s",
+        user_google_email, template_id, template_name, new_name
     )
 
-    target_folder_id = destination_folder_id or os.getenv("OUTPUT_FOLDER_ID")
+    # Support legacy: if template_id provided, use it directly (expert mode)
+    if template_id:
+        actual_template_id = template_id
+        logger.debug("[duplicate_template] Using legacy template_id (expert mode)")
+    else:
+        if not template_name:
+            raise ValueError("template_name is required when template_id is not provided.")
+        
+        # Resolve bot_folder_id (use provided, fallback to env var)
+        effective_bot_folder_id = bot_folder_id or os.getenv("BOT_FOLDER_ID")
+        if not effective_bot_folder_id:
+            raise ValueError(
+                "bot_folder_id is required when using template_name. "
+                "Provide the ID of the bot folder containing the Templates subfolder. "
+                "The agent should first search for the bot folder using search_drive_files."
+            )
+        
+        # Update bot_folder_id for later use in destination resolution
+        bot_folder_id = effective_bot_folder_id
+        
+        # Resolve BOT/Templates and find template by name
+        templates_folder_id = await resolve_templates_folder(
+            service, bot_folder_id, templates_folder_name
+        )
+        template_metadata = await find_template_by_name(
+            service, templates_folder_id, template_name
+        )
+        actual_template_id = template_metadata["id"]
 
-    # Validate Drive access for template and destination folder
-    try:
-        await validate_drive_access(service, file_id=template_id, folder_id=target_folder_id, tool_name="duplicate_template")
-    except DriveAccessDeniedError as e:
-        raise Exception(f"Drive access denied: {str(e)}")
+    # Determine destination folder
+    if destination_folder_id:
+        # Legacy/expert mode
+        target_folder_id = destination_folder_id
+        logger.debug("[duplicate_template] Using legacy destination_folder_id (expert mode)")
+    elif destination_subfolder_name:
+        # Create or use BOT/<destination_subfolder_name>
+        # For now, we'll use the bot_folder_id directly and let Drive handle subfolder creation
+        # In a full implementation, we'd check/create the subfolder
+        target_folder_id = bot_folder_id  # Simplified: use bot folder
+        logger.debug(f"[duplicate_template] Using bot folder for destination (subfolder: {destination_subfolder_name})")
+    else:
+        # Default: use OUTPUT_FOLDER_ID or bot_folder_id
+        target_folder_id = os.getenv("OUTPUT_FOLDER_ID") or bot_folder_id
 
+    # Verify template is a Google Doc
     metadata = await asyncio.to_thread(
         service.files()
-        .get(fileId=template_id, fields="id, mimeType", supportsAllDrives=True)
+        .get(fileId=actual_template_id, fields="id, mimeType", supportsAllDrives=True)
         .execute
     )
     if metadata.get("mimeType") != "application/vnd.google-apps.document":
         raise ValueError("Template must be a Google Doc (application/vnd.google-apps.document)")
 
+    # Copy template
     copy_body: Dict[str, Any] = {"name": new_name}
     if target_folder_id:
         copy_body["parents"] = [target_folder_id]
@@ -118,7 +204,7 @@ async def duplicate_template(
     copied = await asyncio.to_thread(
         service.files()
         .copy(
-            fileId=template_id,
+            fileId=actual_template_id,
             body=copy_body,
             fields="id, name, webViewLink",
             supportsAllDrives=True,
@@ -185,49 +271,124 @@ async def fill_template_variables(
 @require_multiple_services(
     [
         {"service_type": "drive", "scopes": "drive_read", "param_name": "drive_service"},
-        {"service_type": "drive", "scopes": "drive_file", "param_name": "write_service"},
+        {"service_type": "drive", "scopes": "drive_read", "param_name": "write_service"},  # Use full drive scope for DWD compatibility
     ]
 )
 async def export_pdf(
     drive_service: Any,
     write_service: Any,
-    user_google_email: str,
-    document_id: str,
+    user_google_email: str,  # Optionnel, ignoré (compat Dust)
+    document_name_or_id: str,
+    bot_folder_id: str | None = None,
+    templates_folder_name: str = "Templates",
     destination_folder_id: str | None = None,
+    destination_subfolder_name: str | None = None,
 ) -> Dict[str, str]:
     """
     Export a Google Doc to PDF and save it to Drive.
 
     Args:
-        user_google_email: Email of the requesting user (injected by auth middleware).
-        document_id: Google Doc ID to export.
-        destination_folder_id: Optional folder ID for the PDF (defaults to OUTPUT_FOLDER_ID env var).
+        user_google_email: Email of the requesting user (ignored, kept for compatibility).
+        bot_folder_id: ID of the bot folder. Required when searching by document name.
+                       The agent should first search for this folder using search_drive_files.
+                       Not required if document_name_or_id is a Drive ID.
+        document_name_or_id: Document name to search for, or document ID if it looks like a Drive ID.
+        templates_folder_name: Name of the templates folder (default: "Templates").
+        destination_folder_id: Legacy/expert mode - use this folder ID directly if provided.
+        destination_subfolder_name: Name of subfolder in bot folder for the PDF (e.g., "Output").
 
     Returns:
         Dict containing the exported PDF file metadata (ID, name, webViewLink).
     """
-    log_tool_start("export_pdf", document_id=document_id, destination_folder_id=destination_folder_id)
+    log_tool_start("export_pdf", bot_folder_id=bot_folder_id, document_name_or_id=document_name_or_id, destination_folder_id=destination_folder_id)
     
-    logger.info("[export_pdf] user=%s document=%s", user_google_email, document_id)
+    logger.info("[export_pdf] user=%s document_name_or_id=%s", user_google_email, document_name_or_id)
 
-    target_folder_id = destination_folder_id or os.getenv("OUTPUT_FOLDER_ID")
+    # Check if document_name_or_id looks like a Drive ID (28-44 chars, alphanumeric)
+    import re
+    is_drive_id = bool(re.match(r"^[a-zA-Z0-9_-]{28,44}$", document_name_or_id))
+    
+    if is_drive_id:
+        # Use as document ID directly
+        actual_document_id = document_name_or_id
+        logger.debug("[export_pdf] Using document_name_or_id as Drive ID")
+    else:
+        # Search by name in BOT or BOT/Output
+        # Resolve bot_folder_id (use provided, fallback to env var)
+        effective_bot_folder_id = bot_folder_id or os.getenv("BOT_FOLDER_ID")
+        if not effective_bot_folder_id:
+            raise ValueError(
+                "bot_folder_id is required when searching by document name. "
+                "Provide the ID of the bot folder, or use the document ID directly. "
+                "The agent should first search for the bot folder using search_drive_files."
+            )
+        bot_folder_id = effective_bot_folder_id
+        
+        # Try BOT/Output first, then BOT
+        search_folders = []
+        if destination_subfolder_name:
+            # Try to resolve subfolder
+            try:
+                output_folder_id = await resolve_templates_folder(
+                    drive_service, bot_folder_id, destination_subfolder_name
+                )
+                search_folders.append(output_folder_id)
+            except ValueError:
+                pass  # Subfolder not found, will try bot_folder_id
+        search_folders.append(bot_folder_id)
+        
+        # Search in folders
+        document_metadata = None
+        for search_folder_id in search_folders:
+            try:
+                document_metadata = await find_document_by_name(
+                    drive_service, search_folder_id, document_name_or_id
+                )
+                break
+            except ValueError:
+                continue
+        
+        if not document_metadata:
+            raise ValueError(
+                f"Document '{document_name_or_id}' not found in bot folder {bot_folder_id} or subfolders."
+            )
+        
+        actual_document_id = document_metadata["id"]
 
-    # Validate Drive access for document and destination folder
-    try:
-        await validate_drive_access(drive_service, file_id=document_id, folder_id=target_folder_id, tool_name="export_pdf")
-    except DriveAccessDeniedError as e:
-        raise Exception(f"Drive access denied: {str(e)}")
-
+    # Get document metadata
     metadata = await asyncio.to_thread(
         drive_service.files()
-        .get(fileId=document_id, fields="id, name, mimeType", supportsAllDrives=True)
+        .get(fileId=actual_document_id, fields="id, name, mimeType", supportsAllDrives=True)
         .execute
     )
     if metadata.get("mimeType") != "application/vnd.google-apps.document":
         raise ValueError("Only Google Docs can be exported to PDF")
 
+    # Determine destination folder
+    if destination_folder_id:
+        # Legacy/expert mode
+        target_folder_id = destination_folder_id
+        logger.debug("[export_pdf] Using legacy destination_folder_id (expert mode)")
+    elif destination_subfolder_name:
+        # Use BOT/<destination_subfolder_name>
+        if not bot_folder_id:
+            bot_folder_id = os.getenv("BOT_FOLDER_ID")
+        if bot_folder_id:
+            try:
+                target_folder_id = await resolve_templates_folder(
+                    drive_service, bot_folder_id, destination_subfolder_name
+                )
+            except ValueError:
+                # Subfolder not found, use bot folder
+                target_folder_id = bot_folder_id
+        else:
+            target_folder_id = os.getenv("OUTPUT_FOLDER_ID")
+    else:
+        # Default: use OUTPUT_FOLDER_ID or bot_folder_id
+        target_folder_id = os.getenv("OUTPUT_FOLDER_ID") or bot_folder_id
+
     export_request = drive_service.files().export_media(
-        fileId=document_id, mimeType="application/pdf"
+        fileId=actual_document_id, mimeType="application/pdf"
     )
     buffer = io.BytesIO()
     downloader = MediaIoBaseDownload(buffer, export_request)
