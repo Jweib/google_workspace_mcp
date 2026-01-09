@@ -520,12 +520,14 @@ async def create_drive_file(
             # Verify file exists
             path_obj = Path(file_path)
             if not path_obj.exists():
-                extra = (
-                    " The server is running via streamable-http, so file:// URLs must point to files inside the container or remote host."
-                    if running_streamable
-                    else ""
-                )
-                raise Exception(f"Local file does not exist: {file_path}.{extra}")
+                if running_streamable:
+                    raise Exception(
+                        f"Local file does not exist: {file_path}. "
+                        "The server is running in streamable-http mode, so file:// URLs from the client cannot be accessed. "
+                        "Instead, use the 'content' parameter to pass the file content directly, or use an HTTP(S) URL if the file is accessible via HTTP."
+                    )
+                else:
+                    raise Exception(f"Local file does not exist: {file_path}.")
             if not path_obj.is_file():
                 extra = (
                     " In streamable-http/Docker deployments, mount the file into the container or provide an HTTP(S) URL."

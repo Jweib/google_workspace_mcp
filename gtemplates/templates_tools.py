@@ -178,11 +178,21 @@ async def duplicate_template(
         target_folder_id = destination_folder_id
         logger.debug("[duplicate_template] Using legacy destination_folder_id (expert mode)")
     elif destination_subfolder_name:
-        # Create or use BOT/<destination_subfolder_name>
-        # For now, we'll use the bot_folder_id directly and let Drive handle subfolder creation
-        # In a full implementation, we'd check/create the subfolder
-        target_folder_id = bot_folder_id  # Simplified: use bot folder
-        logger.debug(f"[duplicate_template] Using bot folder for destination (subfolder: {destination_subfolder_name})")
+        # Use BOT/<destination_subfolder_name>
+        if not bot_folder_id:
+            bot_folder_id = os.getenv("BOT_FOLDER_ID")
+        if bot_folder_id:
+            try:
+                target_folder_id = await resolve_templates_folder(
+                    service, bot_folder_id, destination_subfolder_name
+                )
+                logger.debug(f"[duplicate_template] Resolved destination subfolder: {destination_subfolder_name} -> {target_folder_id}")
+            except ValueError:
+                # Subfolder not found, use bot folder
+                logger.warning(f"[duplicate_template] Subfolder '{destination_subfolder_name}' not found, using bot folder")
+                target_folder_id = bot_folder_id
+        else:
+            target_folder_id = os.getenv("OUTPUT_FOLDER_ID")
     else:
         # Default: use OUTPUT_FOLDER_ID or bot_folder_id
         target_folder_id = os.getenv("OUTPUT_FOLDER_ID") or bot_folder_id
