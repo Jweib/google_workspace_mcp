@@ -28,6 +28,94 @@ class UserInputError(Exception):
     pass
 
 
+def validate_service_account_config() -> None:
+    """
+    Validate Service Account configuration at startup.
+    
+    Checks that at least one Service Account credential configuration is present:
+    - GOOGLE_SERVICE_ACCOUNT_JSON (full JSON), OR
+    - GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY
+    
+    Raises:
+        RuntimeError: If Service Account credentials are not configured
+    """
+    service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    client_email = os.getenv("GOOGLE_CLIENT_EMAIL")
+    private_key = os.getenv("GOOGLE_PRIVATE_KEY")
+
+    if service_account_json:
+        # Service Account JSON is configured - validate it's valid JSON
+        try:
+            import json
+            json.loads(service_account_json)
+            logger.info(
+                "[AUTH] Service Account authentication: GOOGLE_SERVICE_ACCOUNT_JSON is configured and valid"
+            )
+            return
+        except json.JSONDecodeError as e:
+            error_msg = (
+                f"GOOGLE_SERVICE_ACCOUNT_JSON is set but contains invalid JSON: {e}. "
+                "Please check your Service Account JSON configuration."
+            )
+            logger.error(f"[AUTH] {error_msg}")
+            raise RuntimeError(error_msg)
+        except Exception as e:
+            error_msg = f"Failed to validate GOOGLE_SERVICE_ACCOUNT_JSON: {e}"
+            logger.error(f"[AUTH] {error_msg}")
+            raise RuntimeError(error_msg)
+
+    if client_email and private_key:
+        # Service Account email/key is configured
+        logger.info(
+            "[AUTH] Service Account authentication: GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY are configured"
+        )
+        return
+
+    # No Service Account credentials found
+    error_msg = (
+        "Service Account credentials not configured. "
+        "Please set either GOOGLE_SERVICE_ACCOUNT_JSON or "
+        "(GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY) environment variables."
+    )
+    logger.error(f"[AUTH] {error_msg}")
+    raise RuntimeError(error_msg)
+
+
+def validate_impersonate_email() -> str:
+    """
+    Validate GOOGLE_IMPERSONATE_EMAIL at startup.
+    
+    Checks that GOOGLE_IMPERSONATE_EMAIL is present, non-empty, and contains "@".
+    
+    Returns:
+        The impersonate email address
+        
+    Raises:
+        RuntimeError: If GOOGLE_IMPERSONATE_EMAIL is missing or invalid
+    """
+    impersonate_email = os.getenv("GOOGLE_IMPERSONATE_EMAIL")
+    
+    if not impersonate_email:
+        error_msg = (
+            "GOOGLE_IMPERSONATE_EMAIL missing. "
+            "Set this env var to the Google Workspace user email to impersonate (Domain-Wide Delegation)."
+        )
+        logger.error(f"[AUTH] {error_msg}")
+        raise RuntimeError(error_msg)
+    
+    # Validate format (simple check: contains "@")
+    if "@" not in impersonate_email:
+        error_msg = (
+            f"GOOGLE_IMPERSONATE_EMAIL has invalid format: '{impersonate_email}'. "
+            "Must be a valid email address (contains '@')."
+        )
+        logger.error(f"[AUTH] {error_msg}")
+        raise RuntimeError(error_msg)
+    
+    logger.info(f"[AUTH] impersonate_email={impersonate_email} (DWD enabled)")
+    return impersonate_email
+
+
 def check_credentials_directory_permissions(credentials_dir: str = None) -> None:
     """
     Check credentials configuration for Service Account mode.
@@ -230,6 +318,55 @@ def extract_office_xml_text(file_bytes: bytes, mime_type: str) -> Optional[str]:
     except Exception as e:
         logger.error(
             f"Failed to extract office XML text for {mime_type}: {e}", exc_info=True
+        )
+        return None
+
+
+def extract_pdf_text(file_bytes: bytes) -> Optional[str]:
+    """
+    Extract text content from a PDF file using pypdf.
+    
+    Args:
+        file_bytes: The PDF file content as bytes.
+        
+    Returns:
+        str: Extracted text content from the PDF, or None if extraction fails.
+    """
+    try:
+        from pypdf import PdfReader
+        
+        pdf_reader = PdfReader(io.BytesIO(file_bytes))
+        text_parts = []
+        
+        for page_num, page in enumerate(pdf_reader.pages, start=1):
+            try:
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    # Add page separator for multi-page PDFs
+                    if len(pdf_reader.pages) > 1:
+                        text_parts.append(f"\n--- Page {page_num} ---\n")
+                    text_parts.append(page_text)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to extract text from PDF page {page_num}: {e}"
+                )
+                continue
+        
+        if not text_parts:
+            logger.info("No text content found in PDF")
+            return None
+        
+        extracted_text = "\n".join(text_parts).strip()
+        return extracted_text if extracted_text else None
+        
+    except ImportError:
+        logger.error(
+            "pypdf library is not installed. Please install it with: pip install pypdf>=4.0.0"
+        )
+        return None
+    except Exception as e:
+        logger.error(
+            f"Failed to extract text from PDF: {e}", exc_info=True
         )
         return None
 

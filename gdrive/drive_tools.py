@@ -19,7 +19,7 @@ import base64
 
 from auth.service_decorator import require_google_service
 from auth.oauth_config import is_stateless_mode
-from core.utils import extract_office_xml_text, handle_http_errors
+from core.utils import extract_office_xml_text, extract_pdf_text, handle_http_errors
 from core.server import server
 from core.config import get_transport_mode
 from gdrive.drive_helpers import (
@@ -126,10 +126,11 @@ async def get_drive_file_content(
     • Native Google Docs, Sheets, Slides → exported as text / CSV.
     • Office files (.docx, .xlsx, .pptx) → unzipped & parsed with std-lib to
       extract readable text.
+    • PDF files (.pdf) → text extracted using pypdf library.
     • Any other file → downloaded; tries UTF-8 decode, else notes binary.
 
     Args:
-        user_google_email: The user’s Google email address.
+        user_google_email: The user's Google email address.
         file_id: Drive file ID.
 
     Returns:
@@ -167,14 +168,22 @@ async def get_drive_file_content(
 
     file_content_bytes = fh.getvalue()
 
+    # Attempt PDF text extraction for PDF files
+    if mime_type == "application/pdf":
+        pdf_text = extract_pdf_text(file_content_bytes)
+        if pdf_text:
+            body_text = pdf_text
+        else:
+            body_text = (
+                f"[PDF file detected but text extraction failed or PDF contains no extractable text - "
+                f"{len(file_content_bytes)} bytes]"
+            )
     # Attempt Office XML extraction only for actual Office XML files
-    office_mime_types = {
+    elif mime_type in {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }
-
-    if mime_type in office_mime_types:
+    }:
         office_text = extract_office_xml_text(file_content_bytes, mime_type)
         if office_text:
             body_text = office_text
