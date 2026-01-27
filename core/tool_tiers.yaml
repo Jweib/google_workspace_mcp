@@ -140,6 +140,7 @@ templates:
     - list_templates
     - duplicate_template
   extended:
+    - list_template_variables
     - fill_template_variables
     - export_pdf
   complete: []

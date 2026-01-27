@@ -7,6 +7,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -22,6 +23,51 @@ from gtemplates.templates_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Regex to extract {{...}} placeholders (content between double braces)
+_TEMPLATE_VAR_PATTERN = re.compile(r"\{\{([^{}]+)\}\}")
+
+
+def _extract_full_text_from_doc_data(doc_data: Dict[str, Any]) -> str:
+    """
+    Extract all text from a Google Docs API document structure (body + tabs).
+    Used for variable detection in list_template_variables and remaining_variables.
+    """
+    def extract_text_from_elements(elements: List[Dict], depth: int = 0) -> str:
+        if depth > 5:
+            return ""
+        parts = []
+        for element in elements:
+            if "paragraph" in element:
+                para = element.get("paragraph", {}).get("elements", [])
+                for pe in para:
+                    run = pe.get("textRun", {})
+                    if run and "content" in run:
+                        parts.append(run["content"])
+            elif "table" in element:
+                for row in element.get("table", {}).get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        parts.append(
+                            extract_text_from_elements(
+                                cell.get("content", []), depth=depth + 1
+                            )
+                        )
+        return "".join(parts)
+
+    def process_tab(tab: Dict, level: int = 0) -> str:
+        out = []
+        if "documentTab" in tab:
+            body = tab.get("documentTab", {}).get("body", {}).get("content", [])
+            out.append(extract_text_from_elements(body))
+        for child in tab.get("childTabs", []):
+            out.append(process_tab(child, level + 1))
+        return "".join(out)
+
+    body_elements = doc_data.get("body", {}).get("content", [])
+    text_parts = [extract_text_from_elements(body_elements)]
+    for tab in doc_data.get("tabs", []):
+        text_parts.append(process_tab(tab))
+    return "".join(text_parts)
 
 
 @server.tool()
@@ -226,6 +272,45 @@ async def duplicate_template(
 
 
 @server.tool()
+@handle_http_errors("list_template_variables", is_read_only=True, service_type="docs")
+@require_google_service("docs", "docs_read")
+async def list_template_variables(
+    service: Any,
+    user_google_email: str,
+    document_id: str,
+) -> Dict[str, Any]:
+    """
+    Extract all {{...}} template variables from a Google Doc.
+
+    Reads the full document (body and tabs), finds every placeholder of the form
+    {{variable_name}}, and returns their exact strings as they appear. Use this
+    before fill_template_variables to get an exhaustive list of variables,
+    including case variants (e.g. {{Le salarié/La salariée}} and {{le salarié/la salariée}}).
+
+    Only native Google Docs are supported (document_id must be a Docs document ID).
+
+    Args:
+        user_google_email: Email of the requesting user (injected by auth middleware).
+        document_id: Google Doc ID (native Doc only).
+
+    Returns:
+        Dict with "variables" (list of distinct placeholder contents, order of first occurrence)
+        and "count" (number of distinct variables).
+    """
+    log_tool_start("list_template_variables", document_id=document_id)
+    logger.info("[list_template_variables] user=%s document_id=%s", user_google_email, document_id)
+
+    doc_data = await asyncio.to_thread(
+        service.documents().get(documentId=document_id, includeTabsContent=True).execute
+    )
+    full_text = _extract_full_text_from_doc_data(doc_data)
+    matches = _TEMPLATE_VAR_PATTERN.findall(full_text)
+    # Unique, preserve order of first occurrence
+    variables = list(dict.fromkeys(matches))
+    return {"variables": variables, "count": len(variables)}
+
+
+@server.tool()
 @handle_http_errors("fill_template_variables", service_type="docs")
 @require_google_service("docs", "docs_write")
 async def fill_template_variables(
@@ -233,7 +318,9 @@ async def fill_template_variables(
     user_google_email: str,
     document_id: str,
     variables: Dict[str, str],
-) -> Dict[str, int | str]:
+    match_case: bool = True,
+    check_remaining: bool = True,
+) -> Dict[str, Any]:
     """
     Replace {{KEY}} placeholders in a Google Doc with provided values.
 
@@ -241,12 +328,16 @@ async def fill_template_variables(
         user_google_email: Email of the requesting user (injected by auth middleware).
         document_id: Target Google Doc ID.
         variables: Mapping of placeholder keys to replacement text.
+        match_case: If True (default), replacement is case-sensitive. If False, all case
+                   variants of the same placeholder are replaced (e.g. {{Le salarié/La salariée}}
+                   and {{le salarié/la salariée}} with one key).
+        check_remaining: If True (default), re-read the document after replacement and
+                         return remaining_variables (placeholders still present).
 
     Returns:
-        Dict with status and number of replacements made.
+        Dict with status, replaced count, and remaining_variables (if check_remaining).
     """
     log_tool_start("fill_template_variables", document_id=document_id)
-    
     logger.info("[fill_template_variables] user=%s document=%s", user_google_email, document_id)
 
     if not variables:
@@ -258,7 +349,7 @@ async def fill_template_variables(
         requests.append(
             {
                 "replaceAllText": {
-                    "containsText": {"text": placeholder, "matchCase": True},
+                    "containsText": {"text": placeholder, "matchCase": match_case},
                     "replaceText": str(value),
                 }
             }
@@ -273,7 +364,17 @@ async def fill_template_variables(
         replace_info = reply.get("replaceAllText", {})
         replaced += int(replace_info.get("occurrencesChanged", 0))
 
-    return {"status": "ok", "replaced": replaced}
+    out: Dict[str, Any] = {"status": "ok", "replaced": replaced}
+
+    if check_remaining:
+        doc_data = await asyncio.to_thread(
+            service.documents().get(documentId=document_id, includeTabsContent=True).execute
+        )
+        full_text = _extract_full_text_from_doc_data(doc_data)
+        remaining = list(dict.fromkeys(_TEMPLATE_VAR_PATTERN.findall(full_text)))
+        out["remaining_variables"] = remaining
+
+    return out
 
 
 @server.tool()
