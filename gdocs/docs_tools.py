@@ -1246,7 +1246,7 @@ async def export_doc_to_pdf(
     document_id: str,
     pdf_filename: str = None,
     folder_id: str = None,
-) -> str:
+) -> Dict[str, str]:
     """
     Exports a Google Doc to PDF format and saves it to Google Drive.
 
@@ -1257,7 +1257,7 @@ async def export_doc_to_pdf(
         folder_id: Drive folder ID to save PDF in (optional - if not provided, saves in root)
 
     Returns:
-        str: Confirmation message with PDF file details and links
+        Dict with keys pdfId, pdfName, webViewLink (same shape as export_pdf for unified parsing).
     """
     log_tool_start("export_doc_to_pdf", document_id=document_id, folder_id=folder_id)
     
@@ -1277,7 +1277,7 @@ async def export_doc_to_pdf(
             .execute
         )
     except Exception as e:
-        return f"Error: Could not access document {document_id}: {str(e)}"
+        raise ValueError(f"Could not access document {document_id}: {e}") from e
 
     mime_type = file_metadata.get("mimeType", "")
     original_name = file_metadata.get("name", "Unknown Document")
@@ -1285,7 +1285,10 @@ async def export_doc_to_pdf(
 
     # Verify it's a Google Doc
     if mime_type != "application/vnd.google-apps.document":
-        return f"Error: File '{original_name}' is not a Google Doc (MIME type: {mime_type}). Only native Google Docs can be exported to PDF."
+        raise ValueError(
+            f"File '{original_name}' is not a Google Doc (MIME type: {mime_type}). "
+            "Only native Google Docs can be exported to PDF."
+        )
 
     logger.info(f"[export_doc_to_pdf] Exporting '{original_name}' to PDF")
 
@@ -1306,7 +1309,7 @@ async def export_doc_to_pdf(
         pdf_size = len(pdf_content)
 
     except Exception as e:
-        return f"Error: Failed to export document to PDF: {str(e)}"
+        raise ValueError(f"Failed to export document to PDF: {e}") from e
 
     # Determine PDF filename
     if not pdf_filename:
@@ -1340,24 +1343,25 @@ async def export_doc_to_pdf(
             .execute
         )
 
-        pdf_file_id = uploaded_file.get("id")
-        pdf_web_link = uploaded_file.get("webViewLink", "#")
-        pdf_parents = uploaded_file.get("parents", [])
+        pdf_file_id = uploaded_file.get("id", "")
+        pdf_web_link = uploaded_file.get("webViewLink", "")
+        pdf_file_name = uploaded_file.get("name", pdf_filename)
 
         logger.info(
             f"[export_doc_to_pdf] Successfully uploaded PDF to Drive: {pdf_file_id}"
         )
 
-        folder_info = ""
-        if folder_id:
-            folder_info = f" in folder {folder_id}"
-        elif pdf_parents:
-            folder_info = f" in folder {pdf_parents[0]}"
-
-        return f"Successfully exported '{original_name}' to PDF and saved to Drive as '{pdf_filename}' (ID: {pdf_file_id}, {pdf_size:,} bytes){folder_info}. PDF: {pdf_web_link} | Original: {web_view_link}"
+        return {
+            "pdfId": pdf_file_id,
+            "pdfName": pdf_file_name,
+            "webViewLink": pdf_web_link,
+        }
 
     except Exception as e:
-        return f"Error: Failed to upload PDF to Drive: {str(e)}. PDF was generated successfully ({pdf_size:,} bytes) but could not be saved to Drive."
+        raise ValueError(
+            f"Failed to upload PDF to Drive: {e}. "
+            f"PDF was generated successfully ({pdf_size:,} bytes) but could not be saved to Drive."
+        ) from e
 
 
 # Create comment management tools for documents

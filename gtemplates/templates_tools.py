@@ -293,6 +293,7 @@ async def export_pdf(
     templates_folder_name: str = "Templates",
     destination_folder_id: str | None = None,
     destination_subfolder_name: str | None = None,
+    pdf_filename: str | None = None,
 ) -> Dict[str, str]:
     """
     Export a Google Doc to PDF and save it to Drive.
@@ -306,9 +307,11 @@ async def export_pdf(
         templates_folder_name: Name of the templates folder (default: "Templates").
         destination_folder_id: Legacy/expert mode - use this folder ID directly if provided.
         destination_subfolder_name: Name of subfolder in bot folder for the PDF (e.g., "Output").
+        pdf_filename: Optional custom name for the PDF file. If omitted, uses document name + ".pdf".
+                      If provided without ".pdf" extension, it is appended.
 
     Returns:
-        Dict containing the exported PDF file metadata (ID, name, webViewLink).
+        Dict with keys pdfId, pdfName, webViewLink (same shape for all export-PDF tools).
     """
     log_tool_start("export_pdf", bot_folder_id=bot_folder_id, document_name_or_id=document_name_or_id, destination_folder_id=destination_folder_id)
     
@@ -408,7 +411,10 @@ async def export_pdf(
         _, done = await loop.run_in_executor(None, downloader.next_chunk)
 
     buffer.seek(0)
-    pdf_name = f"{metadata.get('name', 'document')}.pdf"
+    if pdf_filename:
+        pdf_name = pdf_filename if pdf_filename.endswith(".pdf") else f"{pdf_filename}.pdf"
+    else:
+        pdf_name = f"{metadata.get('name', 'document')}.pdf"
     media_body = MediaIoBaseUpload(buffer, mimetype="application/pdf", resumable=True)
 
     file_metadata: Dict[str, Any] = {"name": pdf_name}
