@@ -82,17 +82,12 @@ class MCPSessionMiddleware(BaseHTTPMiddleware):
                 except Exception:
                     pass
 
-            # Extract agent from X-Agent header
-            agent = headers.get("X-Agent", "").lower()
-            if agent and agent not in ("beatus", "hildegarde"):
-                agent = None  # Invalid agent, ignore
-
             # Extract end_user_id and request_id from headers
             end_user_id = extract_end_user_id(headers)
             request_id = extract_request_id(headers)
 
             # Build session context
-            if session_id or auth_context or user_email or mcp_session_id or agent:
+            if session_id or auth_context or user_email or mcp_session_id:
                 # Create session ID hierarchy: explicit session_id > Google user session > FastMCP session
                 effective_session_id = session_id
                 if not effective_session_id and user_email:
@@ -111,20 +106,16 @@ class MCPSessionMiddleware(BaseHTTPMiddleware):
                         "method": request.method,
                         "user_email": user_email,
                         "mcp_session_id": mcp_session_id,
-                        "agent": agent,  # Store agent in metadata
                         "end_user_id": end_user_id,  # Store end_user_id in metadata
                         "request_id": request_id,  # Store request_id in metadata
                     },
                 )
                 
-                # Store agent, end_user_id, and request_id in FastMCP context if available
+                # Store end_user_id and request_id in FastMCP context if available
                 try:
                     from fastmcp.server.dependencies import get_context
                     ctx = get_context()
                     if ctx:
-                        if agent:
-                            ctx.set_state("agent", agent)
-                            logger.debug(f"Stored agent '{agent}' in FastMCP context")
                         ctx.set_state("end_user_id", end_user_id)
                         ctx.set_state("request_id", request_id)
                         logger.debug(

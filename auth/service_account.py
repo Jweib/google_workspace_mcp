@@ -54,7 +54,12 @@ def get_service_account_credentials(required_scopes: List[str]):
             credentials = service_account.Credentials.from_service_account_info(
                 info, scopes=required_scopes
             )
-            logger.info("Service Account credentials created from GOOGLE_SERVICE_ACCOUNT_JSON")
+            # Extract client_email for logging (never log private_key)
+            client_email = info.get("client_email", "unknown")
+            logger.info(
+                f"[AUTH] Service Account credentials created from GOOGLE_SERVICE_ACCOUNT_JSON: "
+                f"service_account_client_email={client_email} scopes={required_scopes}"
+            )
             return credentials
         except json.JSONDecodeError as e:
             raise ServiceAccountError(
@@ -95,7 +100,10 @@ def get_service_account_credentials(required_scopes: List[str]):
             },
             scopes=required_scopes,
         )
-        logger.info("Service Account credentials created from GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY")
+        logger.info(
+            f"[AUTH] Service Account credentials created from GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY: "
+            f"service_account_client_email={client_email} scopes={required_scopes}"
+        )
         return credentials
     except Exception as e:
         raise ServiceAccountError(
@@ -155,9 +163,24 @@ async def get_authenticated_google_service(
         logger.error(error_msg, exc_info=True)
         raise ServiceAccountError(error_msg)
 
+    # Extract client email for logging (before DWD)
+    client_email = getattr(credentials, "service_account_email", None) or getattr(credentials, "_service_account_email", None)
+    if not client_email:
+        # Try to extract from credentials info
+        try:
+            if hasattr(credentials, "_service_account_email"):
+                client_email = credentials._service_account_email
+        except Exception:
+            pass
+    
     # Apply Domain-Wide Delegation: impersonate the user
     try:
         credentials = credentials.with_subject(user_google_email)
+        # Log auth details (never log private_key)
+        logger.info(
+            f"[AUTH] [{tool_name}] service_account_client_email={client_email} "
+            f"subject={user_google_email} scopes={required_scopes}"
+        )
         logger.info(
             f"[{tool_name}] Applied Domain-Wide Delegation for user: {user_google_email}"
         )
@@ -168,12 +191,16 @@ async def get_authenticated_google_service(
         logger.error(error_msg, exc_info=True)
         raise ServiceAccountError(error_msg)
 
-    # Build the service
+    # Build the service (this will trigger token request if needed)
     try:
         service = build(service_name, version, credentials=credentials)
+        # Log when service is built (token will be requested on first API call)
         logger.info(
-            f"[{tool_name}] Successfully authenticated {service_name} v{version} "
+            f"[{tool_name}] Successfully built {service_name} v{version} service "
             f"using Service Account + DWD for user: {user_google_email}"
+        )
+        logger.debug(
+            f"[{tool_name}] Token will be requested on first API call for {service_name} v{version}"
         )
         return service, user_google_email
     except HttpError as e:

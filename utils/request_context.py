@@ -83,34 +83,30 @@ def extract_request_id(headers: Dict[str, str]) -> str:
 
 def get_request_context() -> Dict[str, str]:
     """
-    Get request context (agent, end_user_id, request_id) from FastMCP context.
+    Get request context (end_user_id, request_id) from FastMCP context.
 
     Returns:
-        Dictionary with keys: agent, end_user_id, request_id
+        Dictionary with keys: end_user_id, request_id
         Defaults to "unknown" if context not available
     """
     try:
         ctx = get_context()
         if not ctx:
             return {
-                "agent": "unknown",
                 "end_user_id": "unknown",
                 "request_id": str(uuid.uuid4()),
             }
 
-        agent = ctx.get_state("agent") or "unknown"
         end_user_id = ctx.get_state("end_user_id") or "unknown"
         request_id = ctx.get_state("request_id") or str(uuid.uuid4())
 
         return {
-            "agent": agent,
             "end_user_id": end_user_id,
             "request_id": request_id,
         }
     except Exception as e:
         logger.debug(f"Could not get request context: {e}")
         return {
-            "agent": "unknown",
             "end_user_id": "unknown",
             "request_id": str(uuid.uuid4()),
         }
@@ -134,7 +130,6 @@ def log_tool_start(tool_name: str, **resource_ids: Any) -> None:
     log_data = {
         "event": "tool_start",
         "tool": tool_name,
-        "agent": context["agent"],
         "end_user_id": context["end_user_id"],
         "request_id": context["request_id"],
         "resources": resources,

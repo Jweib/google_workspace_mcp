@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from auth.oauth_config import reload_oauth_config, is_stateless_mode
 from core.log_formatter import EnhancedLogFormatter, configure_file_logging
-from core.utils import check_credentials_directory_permissions
+from core.utils import check_credentials_directory_permissions, validate_service_account_config, validate_impersonate_email
 from core.server import server, set_transport_mode, configure_server_for_http
 from core.tool_tier_loader import resolve_tools_from_tier
 from core.tool_registry import (
@@ -103,7 +103,9 @@ def main():
             "forms",
             "slides",
             "tasks",
+            "contacts",
             "search",
+            "appscript",
             "templates",
         ],
         help="Specify which tools to register. If not provided, all tools are registered.",
@@ -178,7 +180,9 @@ def main():
         "forms": lambda: import_module("gforms.forms_tools"),
         "slides": lambda: import_module("gslides.slides_tools"),
         "tasks": lambda: import_module("gtasks.tasks_tools"),
+        "contacts": lambda: import_module("gcontacts.contacts_tools"),
         "search": lambda: import_module("gsearch.search_tools"),
+        "appscript": lambda: import_module("gappsscript.apps_script_tools"),
         "templates": lambda: import_module("gtemplates.templates_tools"),
     }
 
@@ -192,7 +196,9 @@ def main():
         "forms": "📝",
         "slides": "🖼️",
         "tasks": "✓",
+        "contacts": "👤",
         "search": "🔍",
+        "appscript": "⚡",
         "templates": "📑",
     }
 
@@ -228,7 +234,7 @@ def main():
 
     wrap_server_tool_method(server)
 
-    from auth.scopes import set_enabled_tools
+    from auth.scopes import set_enabled_tools, log_drive_docs_sheets_scopes
 
     set_enabled_tools(list(tools_to_import))
 
@@ -248,6 +254,9 @@ def main():
 
     # Filter tools based on tier configuration (if tier-based loading is enabled)
     filter_server_tools(server)
+
+    # Log final scopes configuration for Drive/Docs/Sheets
+    log_drive_docs_sheets_scopes()
 
     safe_print("📊 Configuration Summary:")
     safe_print(f"   🔧 Services Loaded: {len(tools_to_import)}/{len(tool_imports)}")
@@ -271,20 +280,28 @@ def main():
         safe_print("🔐 Single-user mode enabled")
         safe_print("")
 
-    # Check Service Account credentials configuration (skip in stateless mode)
+    # Validate Service Account configuration at startup (skip in stateless mode)
     if not is_stateless_mode():
         try:
-            safe_print("🔍 Checking Service Account credentials configuration...")
-            check_credentials_directory_permissions()
+            safe_print("🔍 Validating Service Account configuration...")
+            validate_service_account_config()
             safe_print("✅ Service Account credentials configuration verified")
+            
+            # Validate GOOGLE_IMPERSONATE_EMAIL
+            impersonate_email = validate_impersonate_email()
+            safe_print(f"✅ Domain-Wide Delegation configured for: {impersonate_email}")
             safe_print("")
+        except RuntimeError as e:
+            safe_print(f"❌ Configuration validation failed: {e}")
+            logger.error(f"[AUTH] Configuration validation failed: {e}")
+            sys.exit(1)
         except (PermissionError, OSError, ValueError) as e:
             safe_print(f"❌ Service Account credentials check failed: {e}")
             safe_print(
                 "   Please ensure GOOGLE_SERVICE_ACCOUNT_JSON or "
                 "GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY are configured"
             )
-            logger.error(f"Failed Service Account credentials check: {e}")
+            logger.error(f"[AUTH] Service Account credentials check failed: {e}")
             sys.exit(1)
     else:
         safe_print("🔍 Skipping credentials check (stateless mode)")

@@ -70,8 +70,12 @@ sheets:
   extended:
     - list_spreadsheets
     - get_spreadsheet_info
+    - format_sheet_range
   complete:
     - create_sheet
+    - add_conditional_formatting
+    - update_conditional_formatting
+    - delete_conditional_formatting
     - read_spreadsheet_comments
     - create_spreadsheet_comment
     - reply_to_spreadsheet_comment
@@ -134,6 +138,39 @@ search:
     - search_custom_siterestrict
   complete:
     - get_search_engine_info
+
+contacts:
+  core:
+    - search_contacts
+    - get_contact
+    - list_contacts
+    - manage_contact
+  extended:
+    - list_contact_groups
+    - get_contact_group
+  complete:
+    - manage_contacts_batch
+    - manage_contact_group
+
+appscript:
+  core:
+    - list_script_projects
+    - get_script_project
+    - get_script_content
+    - create_script_project
+    - update_script_content
+    - run_script_function
+    - generate_trigger_code
+  extended:
+    - manage_deployment
+    - list_deployments
+    - delete_script_project
+    - list_versions
+    - create_version
+    - get_version
+    - list_script_processes
+    - get_script_metrics
+  complete: []
 
 templates:
   core:

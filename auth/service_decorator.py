@@ -36,6 +36,7 @@ from auth.scopes import (
     CHAT_READONLY_SCOPE,
     CHAT_WRITE_SCOPE,
     CHAT_SPACES_SCOPE,
+    CHAT_SPACES_READONLY_SCOPE,
     FORMS_BODY_SCOPE,
     FORMS_BODY_READONLY_SCOPE,
     FORMS_RESPONSES_READONLY_SCOPE,
@@ -43,7 +44,13 @@ from auth.scopes import (
     SLIDES_READONLY_SCOPE,
     TASKS_SCOPE,
     TASKS_READONLY_SCOPE,
+    CONTACTS_SCOPE,
+    CONTACTS_READONLY_SCOPE,
     CUSTOM_SEARCH_SCOPE,
+    SCRIPT_PROJECTS_SCOPE,
+    SCRIPT_PROJECTS_READONLY_SCOPE,
+    SCRIPT_DEPLOYMENTS_SCOPE,
+    SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,7 +114,9 @@ SERVICE_CONFIGS = {
     "forms": {"service": "forms", "version": "v1"},
     "slides": {"service": "slides", "version": "v1"},
     "tasks": {"service": "tasks", "version": "v1"},
+    "people": {"service": "people", "version": "v1"},
     "customsearch": {"service": "customsearch", "version": "v1"},
+    "script": {"service": "script", "version": "v1"},
 }
 
 
@@ -146,8 +155,16 @@ SCOPE_GROUPS = {
     # Tasks scopes
     "tasks": TASKS_SCOPE,
     "tasks_read": TASKS_READONLY_SCOPE,
+    # Contacts scopes
+    "contacts": CONTACTS_SCOPE,
+    "contacts_read": CONTACTS_READONLY_SCOPE,
     # Custom Search scope
     "customsearch": CUSTOM_SEARCH_SCOPE,
+    # Apps Script scopes
+    "script_readonly": SCRIPT_PROJECTS_READONLY_SCOPE,
+    "script_projects": SCRIPT_PROJECTS_SCOPE,
+    "script_deployments": SCRIPT_DEPLOYMENTS_SCOPE,
+    "script_deployments_readonly": SCRIPT_DEPLOYMENTS_READONLY_SCOPE,
 }
 
 

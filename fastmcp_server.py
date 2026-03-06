@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from auth.oauth_config import reload_oauth_config, is_stateless_mode
 from core.log_formatter import EnhancedLogFormatter, configure_file_logging
-from core.utils import check_credentials_directory_permissions
+from core.utils import check_credentials_directory_permissions, validate_service_account_config, validate_impersonate_email
 from core.server import server, set_transport_mode, configure_server_for_http
 from core.tool_registry import (
     set_enabled_tools as set_enabled_tool_names,
@@ -115,14 +115,20 @@ def configure_safe_logging():
 # Configure safe logging
 configure_safe_logging()
 
-# Check Service Account credentials configuration (skip in stateless mode)
+# Validate Service Account configuration at startup (skip in stateless mode)
 if not is_stateless_mode():
     try:
-        logger.info("Checking Service Account credentials configuration...")
-        check_credentials_directory_permissions()
-        logger.info("Service Account credentials configuration verified")
+        logger.info("[AUTH] Validating Service Account configuration...")
+        validate_service_account_config()
+        logger.info("[AUTH] Service Account credentials configuration verified")
+        
+        # Validate GOOGLE_IMPERSONATE_EMAIL
+        validate_impersonate_email()
+    except RuntimeError as e:
+        logger.error(f"[AUTH] Configuration validation failed: {e}")
+        sys.exit(1)
     except (PermissionError, OSError, ValueError) as e:
-        logger.error(f"Service Account credentials check failed: {e}")
+        logger.error(f"[AUTH] Service Account credentials check failed: {e}")
         logger.error(
             "   Please ensure GOOGLE_SERVICE_ACCOUNT_JSON or "
             "GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY are configured"
@@ -144,7 +150,9 @@ import gchat.chat_tools
 import gforms.forms_tools
 import gslides.slides_tools
 import gtasks.tasks_tools
+import gcontacts.contacts_tools
 import gsearch.search_tools
+import gappsscript.apps_script_tools
 import gtemplates.templates_tools
 
 # Configure tool registration
@@ -161,11 +169,17 @@ all_services = [
     "forms",
     "slides",
     "tasks",
+    "contacts",
     "search",
+    "appscript",
     "templates",
 ]
 set_enabled_tools(all_services)  # Set enabled services for scopes
 set_enabled_tool_names(None)  # Don't filter individual tools - enable all
+
+# Log final scopes configuration for Drive/Docs/Sheets
+from auth.scopes import log_drive_docs_sheets_scopes
+log_drive_docs_sheets_scopes()
 
 # Filter tools based on configuration
 filter_server_tools(server)

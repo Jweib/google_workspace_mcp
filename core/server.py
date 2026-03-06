@@ -92,27 +92,30 @@ def _ensure_legacy_callback_route() -> None:
 
 @server.custom_route("/debug/headers", methods=["GET"])
 async def debug_headers(request: Request):
-    """Debug endpoint to inspect headers forwarded by Dust."""
+    """Debug endpoint to inspect headers forwarded by Dust and current request context."""
     import os
     
-    # Protection : vérifier ENABLE_DEBUG ou auth
+    # Protection : vérifier ENABLE_DEBUG
     if os.getenv("ENABLE_DEBUG") != "true":
         return JSONResponse({"error": "Debug endpoint disabled"}, status_code=403)
     
-    # Filtrer headers sensibles
+    # Filtrer headers sensibles (toujours retourner les clés, même si vides)
     safe_headers = {}
-    allowed = ["X-Agent", "X-End-User-Id", "X-Telegram-User-Id", "X-User-Id", "X-Request-Id"]
+    allowed = ["X-End-User-Id", "X-Telegram-User-Id", "X-User-Id", "X-Request-Id"]
     for key in allowed:
-        if key in request.headers:
-            safe_headers[key] = request.headers[key]
+        safe_headers[key] = request.headers.get(key, None)  # None si absent
     
-    # Get request context
+    # Get request context (toujours disponible, même si valeurs par défaut)
     context = get_request_context()
+    
+    # Get all X- headers for reference
+    all_x_headers = {k: request.headers[k] for k in request.headers.keys() if k.startswith("X-")}
     
     return JSONResponse({
         "headers": safe_headers,
-        "all_header_keys": [k for k in request.headers.keys() if k.startswith("X-")],
+        "all_x_headers": all_x_headers,
         "context": context,
+        "note": "Headers may be None if not present in request. Context always returns values (defaults to 'unknown' if not set)."
     })
 
 
@@ -198,11 +201,9 @@ async def start_google_auth(
     1. Set GOOGLE_SERVICE_ACCOUNT_JSON environment variable (full JSON), OR
     2. Set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables
 
-    Additionally, configure agent context:
-    - BEATUS_USER_EMAIL: Google email for Beatus agent
-    - HILDEGARDE_USER_EMAIL: Google email for Hildegarde agent
-    - BEATUS_DRIVE_FOLDER_ID: Drive folder ID allowlist for Beatus
-    - HILDEGARDE_DRIVE_FOLDER_ID: Drive folder ID allowlist for Hildegarde
+    Additionally, configure:
+    - GOOGLE_IMPERSONATE_EMAIL: Google email to impersonate via Domain-Wide Delegation (required)
+    - BOT_FOLDER_ID: Bot folder ID for templates (optional, fallback for dev)
 
     See README for Domain-Wide Delegation setup instructions.
     """
@@ -224,29 +225,40 @@ async def start_google_auth(
 
 @server.tool()
 async def debug_headers() -> str:
-    """Debug tool to inspect headers forwarded by Dust and current request context."""
+    """Debug tool to inspect headers forwarded by Dust and current request context.
+    
+    Returns JSON with:
+    - context: Resolved request context (end_user_id, request_id)
+    - headers: Safe headers from request (X-End-User-Id, etc.)
+    
+    Works even if headers are absent (returns None or defaults).
+    """
     from fastmcp.server.dependencies import get_context
     import json
     
+    # Get request context (always available, defaults to "unknown" if not set)
     context = get_request_context()
     
     # Try to get raw headers from FastMCP context if available
     raw_headers = {}
+    allowed = ["X-End-User-Id", "X-Telegram-User-Id", "X-User-Id", "X-Request-Id"]
     try:
         ctx = get_context()
         if ctx:
             request = ctx.get_state("request")
             if request and hasattr(request, "headers"):
-                allowed = ["X-Agent", "X-End-User-Id", "X-Telegram-User-Id", "X-User-Id", "X-Request-Id"]
                 for key in allowed:
-                    if key in request.headers:
-                        raw_headers[key] = request.headers[key]
+                    raw_headers[key] = request.headers.get(key, None)  # None si absent
     except Exception as e:
         logger.debug(f"Could not get headers from context: {e}")
+        # Set all to None if we can't access headers
+        for key in allowed:
+            raw_headers[key] = None
     
     result = {
         "context": context,
         "headers": raw_headers,
+        "note": "Headers may be None if not present. Context always returns values (defaults to 'unknown' if not set)."
     }
     
     return json.dumps(result, indent=2, ensure_ascii=False)
