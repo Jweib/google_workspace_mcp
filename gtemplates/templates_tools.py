@@ -78,19 +78,19 @@ async def list_templates(
     user_google_email: str,  # Optionnel, ignoré (compat Dust)
     bot_folder_id: str | None = None,
     folder_id: str | None = None,  # Legacy/expert: utiliser directement
-    templates_folder_name: str = "Template",
+    templates_folder_name: str = "Templates",
     page_size: int = 100,
     query: str | None = None,
 ) -> Dict[str, List[Dict[str, str]]]:
     """
-    List template files within a Template folder.
+    List template files within a Templates folder.
 
     Args:
         user_google_email: Email of the requesting user (ignored, kept for compatibility).
-        bot_folder_id: ID of the bot folder containing the Template subfolder. 
+        bot_folder_id: ID of the bot folder containing the Templates subfolder. 
         The agent should first search for this folder using search_drive_files.
         folder_id: Legacy/expert mode - use this folder directly if provided.
-        templates_folder_name: Name of the templates folder (default: "Template").
+        templates_folder_name: Name of the templates folder (default: "Templates").
         page_size: Maximum number of templates to return (default: 100).
         query: Optional query filter (e.g., "name contains 'Contract'").
 
@@ -160,7 +160,7 @@ async def duplicate_template(
     bot_folder_id: str | None = None,
     template_id: str | None = None,  # Legacy/expert: utiliser directement
     template_name: str | None = None,  # Si template_id absent
-    templates_folder_name: str = "Template",
+    templates_folder_name: str = "Templates",
     destination_subfolder_name: str | None = None,
     destination_folder_id: str | None = None,
 ) -> Dict[str, str]:
@@ -176,7 +176,7 @@ async def duplicate_template(
         template_name: Name of the template to find (required if template_id not provided).
         new_name: Name for the duplicated document.
         templates_folder_name: Name of the templates folder (default: "Templates").
-        destination_subfolder_name: Name of subfolder in bot folder for the copy (e.g., "Output").
+        destination_subfolder_name: Name of subfolder in bot folder for the copy (e.g., "Generated").
         destination_folder_id: Legacy/expert mode - use this folder ID directly if provided.
 
     Returns:
@@ -391,7 +391,7 @@ async def export_pdf(
     user_google_email: str,  # Optionnel, ignoré (compat Dust)
     document_name_or_id: str,
     bot_folder_id: str | None = None,
-    templates_folder_name: str = "Template",
+    templates_folder_name: str = "Templates",
     destination_folder_id: str | None = None,
     destination_subfolder_name: str | None = None,
     pdf_filename: str | None = None,
@@ -405,9 +405,9 @@ async def export_pdf(
         The agent should first search for this folder using search_drive_files.
         Not required if document_name_or_id is a Drive ID.
         document_name_or_id: Document name to search for, or document ID if it looks like a Drive ID.
-        templates_folder_name: Name of the templates folder (default: "Template").
+        templates_folder_name: Name of the templates folder (default: "Templates").
         destination_folder_id: Legacy/expert mode - use this folder ID directly if provided.
-        destination_subfolder_name: Name of subfolder in bot folder for the PDF (e.g., "Generated").
+        destination_subfolder_name: Name of subfolder in bot folder for the PDF (e.g., "Output").
         pdf_filename: Optional custom name for the PDF file. If omitted, uses document name + ".pdf".
         If provided without ".pdf" extension, it is appended.
 
